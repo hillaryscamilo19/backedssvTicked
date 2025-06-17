@@ -1,6 +1,7 @@
 import traceback
 from typing import List
 from urllib import request
+from app.routes.notifications_routes_flexible import TicketNotification, notify_ticket_created
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import delete, desc, select
@@ -16,6 +17,7 @@ from app.Schemas.Ticket import TicketCreate, TicketUpdate
 from app.Schemas.Message import MessageCreate
 from app.models.attachments_model import Attachment
 from app.models.messages_model import messages_helper
+from fastapi import BackgroundTasks
 from fastapi import UploadFile, File
 import os
 from app.utils.email_utils import send_email  
@@ -66,13 +68,17 @@ async def get_ticket(ticket_id: int, db: AsyncSession = Depends(get_db), current
         raise HTTPException(status_code=404, detail="Ticket no encontrado")
     return ticket_helper(ticket)
 
+
+
 # 3. Crear ticket
 @router.post("/")
 async def create_ticket(
     data: TicketCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user)
 ):
+
     data_dict = data.model_dump()
     data_dict["created_user_id"] = current_user.id
 
@@ -86,7 +92,8 @@ async def create_ticket(
     await db.commit()
     await db.refresh(new_ticket)
 
-    # ✅ Obtener usuarios del departamento asignado
+    # ✅ Obtener usuarios del departamento y sus correos
+    recipient_emails = []
     if new_ticket.assigned_department_id:
         result = await db.execute(
             select(User).filter(
@@ -95,15 +102,22 @@ async def create_ticket(
             )
         )
         dept_users = result.scalars().all()
+        recipient_emails = [user.email for user in dept_users if user.email]
 
-    """ for user in dept_users:
-            send_email(
-                to=user.email,
-                subject="Nuevo ticket asignado a tu departamento",
-                body=f"Hola {user.fullname},\n\nSe ha creado un nuevo ticket #{new_ticket.id} asignado a tu departamento.\n\nPor favor revisa el sistema."
-            )  """
+        # ✅ Enviar notificación en segundo plano
+        notification_data = TicketNotification(
+            ticket_id=str(new_ticket.id),
+            title=new_ticket.title,
+            description=new_ticket.description,
+            category_id=new_ticket.category_id,
+            assigned_department_id=new_ticket.assigned_department_id,
+            created_user_id=new_ticket.created_user_id,
+            recipient_emails=recipient_emails
+        )
 
-    # Retornar ticket
+        background_tasks.add_task(notify_ticket_created, notification_data)
+
+    # ✅ Devolver el ticket creado
     result = await db.execute(
         select(Ticket)
         .filter(Ticket.id == new_ticket.id)
@@ -118,7 +132,6 @@ async def create_ticket(
     )
     ticket = result.scalar_one_or_none()
     return ticket_helper(ticket)
-
 
 
 # 4. Actualizar ticket estado
