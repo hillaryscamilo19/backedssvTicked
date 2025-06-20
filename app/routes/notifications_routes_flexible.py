@@ -250,7 +250,7 @@ async def notify_ticket_created(notification_data: TicketNotification):
                     <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
                         <p><strong>Número de Ticket:</strong> #{notification_data.ticket_id}</p>
                         <p><strong>Título:</strong> "{notification_data.title}"</p>
-                        <p><strong>Departamento:</strong> {notification_data.assigned_department_id}</p>
+                        <p><strong>Departamento:</strong> {notification_data.assigned_department_id.name}</p>
                         <p><strong>Fecha:</strong> {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
                     </div>
                     <div style="background-color: #dbeafe; padding: 15px; border-radius: 8px;">
