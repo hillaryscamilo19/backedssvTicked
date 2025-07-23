@@ -1,252 +1,269 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-from app.Schemas.user import PasswordReset, UserStatusUpdate, UserUpdate
-from app.auth.security import hash_password
-from app.Schemas.Esquema import UserCreate
-from app.db.dbp import get_db  
-from app.models.user_model import obtener_usuarios, usuario_helper, User, update_fields
-from app.auth.dependencies import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId # Necesario para manejar ObjectId de MongoDB
+from datetime import datetime
+
+from app.db.dbp import get_db
+from app.Schemas.Esquema import UserCreate, UserUpdate, UserResponse, UserInDB, DepartmentResponse
+from app.auth.dependencies import get_current_user # Mantén esta importación si necesitas autenticación
+from app.auth.security import hash_password # Para el registro o actualización de contraseña
 
 router = APIRouter()
 
-# Ruta para obtener el usuario actual
-@router.get("/me")
-async def read_current_user(current_user: User = Depends(get_current_user)):
-    return current_user
+# --- Funciones auxiliares (copiadas de auth.py para evitar dependencias circulares si es necesario) ---
+async def get_user_by_username(username: str, db: AsyncIOMotorDatabase):
+    users_collection = db["users"]
+    user_data = await users_collection.find_one({"username": username})
+    if user_data:
+        # Asegúrate de que phone_ext y department_id sean strings si son ints en la DB
+        if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
+            user_data['phone_ext'] = str(user_data['phone_ext'])
+        if 'department_id' in user_data and isinstance(user_data['department_id'], int):
+            user_data['department_id'] = str(user_data['department_id'])
+        return UserInDB(**user_data)
+    return None
+
+async def get_user_by_email(email: str, db: AsyncIOMotorDatabase):
+    users_collection = db["users"]
+    user_data = await users_collection.find_one({"email": email})
+    if user_data:
+        if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
+            user_data['phone_ext'] = str(user_data['phone_ext'])
+        if 'department_id' in user_data and isinstance(user_data['department_id'], int):
+            user_data['department_id'] = str(user_data['department_id'])
+        return UserInDB(**user_data)
+    return None
+
+async def get_user_by_phone_ext(phone_ext: str, db: AsyncIOMotorDatabase):
+    users_collection = db["users"]
+    user_data = await users_collection.find_one({"phone_ext": phone_ext})
+    if user_data:
+        if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
+            user_data['phone_ext'] = str(user_data['phone_ext'])
+        if 'department_id' in user_data and isinstance(user_data['department_id'], int):
+            user_data['department_id'] = str(user_data['department_id'])
+        return UserInDB(**user_data)
+    return None
+
+async def get_department_by_id(department_id: str, db: AsyncIOMotorDatabase):
+    departments_collection = db["departments"]
+    try:
+        object_id = ObjectId(department_id)
+    except Exception:
+        return None # ID inválido
+    department_data = await departments_collection.find_one({"_id": object_id})
+    if department_data:
+        # Pydantic se encargará de _id a id en DepartmentResponse
+        return DepartmentResponse(**department_data)
+    return None
+
+# Función auxiliar para construir la respuesta de usuario con el departamento anidado
+async def build_user_response(user_doc: dict, db: AsyncIOMotorDatabase) -> UserResponse:
+    # Asegúrate de que phone_ext y department_id sean strings si son ints en la DB
+    # Esto es una conversión de tipo si la DB los guarda como int, para que Pydantic los acepte como str
+    if 'phone_ext' in user_doc and isinstance(user_doc['phone_ext'], int):
+        user_doc['phone_ext'] = str(user_doc['phone_ext'])
+    if 'department_id' in user_doc and isinstance(user_doc['department_id'], int):
+        user_doc['department_id'] = str(user_doc['department_id'])
+
+    department_info = None
+    if user_doc.get("department_id"):
+        department = await get_department_by_id(user_doc["department_id"], db)
+        if department:
+            department_info = department # Esto ya es una instancia de DepartmentResponse
+
+    # Construye el diccionario para UserResponse explícitamente
+    # Asegúrate de que todos los campos requeridos por UserResponse estén presentes
+    user_response_data = {
+        "id": str(user_doc["_id"]) if "_id" in user_doc else None, # Mapea _id a id
+        "username": user_doc.get("username"),
+        "email": user_doc.get("email"),
+        "fullname": user_doc.get("fullname"),
+        "phone_ext": user_doc.get("phone_ext"),
+        "department_id": user_doc.get("department_id"),
+        "status": user_doc.get("status"),
+        "role": user_doc.get("role"),
+        "created_at": user_doc.get("created_at"),
+        "updated_at": user_doc.get("updated_at"),
+        "department": department_info,
+    }
+    
+    # Filtra None para campos opcionales si es necesario, aunque Pydantic los maneja bien
+    # user_response_data = {k: v for k, v in user_response_data.items() if v is not None}
+
+    return UserResponse(**user_response_data)
+
 
 # Ruta para obtener todos los usuarios
-@router.get("/")
-async def get_usuarios(db: AsyncSession = Depends(get_db) , current_user: User = Depends(get_current_user)):
-    return await obtener_usuarios(db)
+@router.get("/", response_model=List[UserResponse])
+async def get_users(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user) # Requiere autenticación
+):
+    """
+    Obtiene todos los usuarios de la base de datos.
+    """
+    users_collection = db["users"]
+    users_data = await users_collection.find({}).to_list(None)
+    
+    if not users_data:
+        return []
 
-# Ruta para obtener un usuario por el id
-@router.get("/{user_id}")
-async def get_user_by_id( user_id: int,current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(User)
-        .options(selectinload(User.department), selectinload(User.supervision_departments))
-        .filter(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
+    response_users = []
+    for user_doc in users_data:
+        response_users.append(await build_user_response(user_doc, db))
+    
+    return response_users
 
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+# Ruta para obtener un usuario por ID
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user_by_id(
+    user_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user) # Requiere autenticación
+):
+    """
+    Obtiene un usuario por su ID.
+    """
+    users_collection = db["users"]
+    try:
+        object_id = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID de usuario inválido.")
 
-    return usuario_helper(user)
+    user_data = await users_collection.find_one({"_id": object_id})
+    
+    if not user_data:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
+    return await build_user_response(user_data, db)
 
-# Ruta para crear un usuario
-@router.post("/")
-async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db), current_user : User = Depends(get_current_user)):
-    # Verificar si el usuario ya existe
-    result = await db.execute(select(User).filter(User.email == user.email))
-    user_db = result.scalar_one_or_none()
-    if user_db:
-        raise HTTPException(status_code=400, detail="El usuario ya existe")
-    # Crear el usuario
-    user_db = User(**user.dict())
-    db.add(user_db)
-    await db.commit()
-    await db.refresh(user_db)
-    return usuario_helper(user_db)
+# Ruta para crear un nuevo usuario (si no se usa /register)
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user: UserCreate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user) # Requiere autenticación
+):
+    """
+    Crea un nuevo usuario.
+    """
+    users_collection = db["users"]
 
+    existing_user_by_username = await get_user_by_username(user.username.lower(), db)
+    if existing_user_by_username:
+        raise HTTPException(status_code=400, detail="Usuario Ya Existe !")
+
+    existing_user_by_email = await get_user_by_email(user.email.lower(), db)
+    if existing_user_by_email:
+        raise HTTPException(status_code=400, detail="Email Ya Existe !")
+
+    existing_user_by_phone_ext = await get_user_by_phone_ext(user.phone_ext, db)
+    if existing_user_by_phone_ext:
+        raise HTTPException(status_code=400, detail="Extension Ya Existe !")
+
+    hashed_password = hash_password(user.password)
+    
+    user_dict = user.dict(exclude_unset=True)
+    user_dict["password"] = hashed_password
+    user_dict["created_at"] = datetime.utcnow()
+    user_dict["updated_at"] = datetime.utcnow()
+    user_dict["role"] = user.role
+
+    result = await users_collection.insert_one(user_dict)
+    
+    created_user_data = await users_collection.find_one({"_id": result.inserted_id})
+    if not created_user_data:
+        raise HTTPException(status_code=500, detail="Error al crear el usuario en la base de datos.")
+
+    return await build_user_response(created_user_data, db)
 
 # Ruta para actualizar un usuario
-@router.put("/estado/{user_id}")
-async def update_user( user_id: int, updated_data: dict, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    if current_user.role not in (0, 1, 2):
-        raise HTTPException(status_code=403, detail="No tienes permisos suficientes")
-
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    # Actualizar usuario con datos permitidos
-    updated_user = await update_fields(user, updated_data, db)
-
-    # Recargar usuario con relaciones para evitar error de lazy load en async
-    result = await db.execute(
-        select(User)
-        .options(selectinload(User.department), selectinload(User.supervision_departments))
-        .filter(User.id == updated_user.id)
-    )
-    user_with_relations = result.scalar_one_or_none()
-
-    return usuario_helper(user_with_relations)
-
-# Ruta para actualizar un usuarios completo 
-@router.put("/{user_id}")
+@router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
-    user_id: int,
-    updated_data: UserUpdate,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    user_id: str,
+    data: UserUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user) # Requiere autenticación
 ):
-    if current_user.role not in (0, 1, 2):
-        raise HTTPException(status_code=403, detail="No tienes permisos suficientes")
+    """
+    Actualiza un usuario existente.
+    """
+    users_collection = db["users"]
 
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    update_dict = updated_data.dict(exclude_unset=True)
-
-    updated_user = await update_fields(user, update_dict, db)
-
-    result = await db.execute(
-        select(User)
-        .options(
-            selectinload(User.department),
-            selectinload(User.supervision_departments)
-        )
-        .filter(User.id == updated_user.id)
-    )
-    user_with_relations = result.scalar_one_or_none()
-
-    return usuario_helper(user_with_relations)
-
-# NUEVA RUTA: Toggle de estado de usuario (activar/desactivar)
-@router.put("/{user_id}/toggle-status")
-async def toggle_user_status(
-    user_id: int,
-    status_data: UserStatusUpdate,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
     try:
-        # Verificar permisos (solo administradores)
-        if current_user.role not in (0, 1, 2):
-            raise HTTPException(
-                status_code=403, 
-                detail="No tienes permisos para cambiar el estado de usuarios"
-            )
+        object_id = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID de usuario inválido.")
 
-        # Buscar el usuario
-        result = await db.execute(select(User).filter(User.id == user_id))
-        user = result.scalar_one_or_none()
+    update_data = data.dict(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No se proporcionaron datos para actualizar.")
 
-        if not user:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-        # No permitir que un usuario se desactive a sí mismo
-        if user.id == current_user.id:
-            raise HTTPException(
-                status_code=400, 
-                detail="No puedes cambiar tu propio estado"
-            )
-
-        # Actualizar el estado usando tu función update_fields existente
-        update_data = {"status": status_data.status}
-        updated_user = await update_fields(user, update_data, db)
-        
-        status_text = "activado" if updated_user.status else "desactivado"
-        
-        return {
-            "message": f"Usuario {status_text} exitosamente",
-            "user_id": updated_user.id,
-            "username": updated_user.username,
-            "new_status": updated_user.status
-        }
-        
-    except HTTPException:
-        # Re-lanzar HTTPExceptions tal como están
-        raise
-    except Exception as e:
-        await db.rollback()
-        print(f"Error en toggle_user_status: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
-        )
-
-# Ruta para restablecer contraseña
-@router.put("/{user_id}/reset-password")
-async def reset_user_password(
-    user_id: int,
-    password_data: PasswordReset,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    # Verificar permisos (solo administradores o el propio usuario)
-    if current_user.role not in (0, 1, 2) and current_user.id != user_id:
-        raise HTTPException(
-            status_code=403, 
-            detail="No tienes permisos para restablecer esta contraseña"
-        )
-
-    # Buscar el usuario
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    # Validar la nueva contraseña
-    if len(password_data.new_password) < 6:
-        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres")
-
-    # Hashear y actualizar la contraseña
-    hashed_password = hash_password(password_data.new_password)
+    # Si se intenta actualizar la contraseña, hashearla
+    if "password" in update_data:
+        update_data["password"] = hash_password(update_data["password"])
     
-    # Actualizar solo el campo de contraseña
-    user.password = hashed_password
-    await db.commit()
-    await db.refresh(user)
+    update_data["updated_at"] = datetime.utcnow()
 
-    return {"message": "Contraseña restablecida exitosamente"}
+    result = await users_collection.update_one(
+        {"_id": object_id},
+        {"$set": update_data}
+    )
 
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    
+    updated_user_data = await users_collection.find_one({"_id": object_id})
+    if not updated_user_data:
+        raise HTTPException(status_code=500, detail="Error al recuperar el usuario actualizado.")
+
+    return await build_user_response(updated_user_data, db)
 
 # Ruta para eliminar un usuario
-@router.delete("/{user_id}")
-async def delete_user( user_id: int,current_user=Depends(get_current_user),
-db: AsyncSession = Depends(get_db),):
-    if current_user.role not in (0, 1):
-        raise HTTPException(status_code=403, detail="No tienes permisos para eliminar usuarios")
-
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    await db.delete(user)
-    await db.commit()
-    return {"message": "Usuario eliminado exitosamente"}
-
-
-# Ruta para obtener colaboradores del departamento (solo activos)
-@router.get("/departamento/colaboradores")
-async def get_colaboradores_del_departamento(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user) # Requiere autenticación
 ):
-    if not current_user.department_id:
-        raise HTTPException(status_code=400, detail="El usuario no pertenece a ningún departamento.")
+    """
+    Elimina un usuario por su ID.
+    """
+    users_collection = db["users"]
 
-    result = await db.execute(
-        select(User)
-        .filter(
-            User.department_id == current_user.department_id,
-            User.status == True,  # Solo usuarios activos
-            User.id != current_user.id  # Excluir al usuario actual
-        )
-    )
-    colaboradores = result.scalars().all()
+    try:
+        object_id = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID de usuario inválido.")
 
-    return [
-        {
-            "id": u.id,
-            "fullname": u.fullname,
-            "email": u.email,
-            "phone_ext": u.phone_ext, 
-            "status": u.status,
-            "department_id": u.department_id,
-        }
-        for u in colaboradores
-    ]
+    result = await users_collection.delete_one({"_id": object_id})
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    
+    return {"message": "Usuario eliminado correctamente"}
+
+# Ruta para obtener colaboradores de un departamento específico
+@router.get("/departamento/{department_id}/colaboradores", response_model=List[UserResponse])
+async def get_colaboradores_del_departamento(
+    department_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user) # Requiere autenticación
+):
+    """
+    Obtiene todos los colaboradores de un departamento específico.
+    """
+    users_collection = db["users"]
+    
+    colaboradores_data = await users_collection.find({"department_id": department_id}).to_list(None)
+
+    if not colaboradores_data:
+        return []
+
+    response_colaboradores = []
+    for user_doc in colaboradores_data:
+        response_colaboradores.append(await build_user_response(user_doc, db))
+    
+    return response_colaboradores
