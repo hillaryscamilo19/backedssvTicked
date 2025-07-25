@@ -4,29 +4,44 @@ from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Boolean, f
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import relationship, selectinload 
 from app.db.base import Base
-from app.models.departments_model import user_supervision_departments  
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
+from typing import List, Optional
 
+async def obtener_user_por_id(db: AsyncIOMotorDatabase, user_id: str) -> Optional[dict]:
+    users_collection = db["users"]
+    try:
+        object_id = ObjectId(user_id)
+    except Exception:
+        return None
+    user_data = await users_collection.find_one({"_id": object_id})
+    return user_data
+
+async def obtener_users_by_department_id(db: AsyncIOMotorDatabase, department_id: str) -> List[dict]:
+    users_collection = db["users"]
+    users_data = await users_collection.find({"department_id": department_id}).to_list(None)
+    return users_data
+
+# Puedes añadir más funciones CRUD para usuarios aquí si las necesitas
 class User(Base):
     __tablename__ = 'users'
     id = Column(Integer, primary_key=True, index=True)
     fullname = Column(String)
     email = Column(String, unique=True, index=True)
     phone_ext = Column(Integer)  
-    department_id = Column(Integer, ForeignKey("departments.id"))
+    department = Column(Integer, ForeignKey("departments.id"))
     role = Column(Integer)
     username = Column(String, unique=True, index=True)
     password = Column(String)
     status = Column(Boolean)
-    created_at = Column("createdat", DateTime(timezone=True), server_default=func.now(), nullable=True)
-    updated_at = Column("updatedat", DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
+    createdAt = Column("createdat", DateTime(timezone=True), server_default=func.now(), nullable=True)
+    updatedAt = Column("updatedat", DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_tickets = relationship("Ticket", back_populates="created_user")
     assigned_tickets = relationship("TicketAssignedUser", back_populates="user")
     department = relationship("Department", back_populates="users")
     messages = relationship("Message", back_populates="user")
     supervision_departments = relationship(
         "Department",
-        secondary=user_supervision_departments,
         back_populates="supervised_by"
     )
     
@@ -63,7 +78,7 @@ async def update_fields(user: User, updated_data: dict, db: AsyncSession):
         "status", "fullname", "email", "phone_ext", "department_id", "role", "username","password"
     }
 
-    disallowed_fields = {"created_at", "createdat", "createdAt", "id"}  # Puedes agregar más si es necesario
+    disallowed_fields = {"createdAt", "createdat", "createdAt", "id"}  # Puedes agregar más si es necesario
 
     # Validar que no se esté intentando modificar campos no permitidos
     for key in updated_data:

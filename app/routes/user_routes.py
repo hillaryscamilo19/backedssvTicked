@@ -7,10 +7,10 @@ from datetime import datetime
 from app.db.dbp import get_db
 from app.Schemas.Esquema import UserCreate, UserUpdate, UserResponse, UserInDB, DepartmentResponse
 from app.auth.dependencies import get_current_user # Mantén esta importación si necesitas autenticación
-from app.auth.security import hash_password # Para el registro o actualización de contraseña
+from app.auth.security import hash_password
+from app.models.user_model import User # Para el registro o actualización de contraseña
 
 router = APIRouter()
-
 # --- Funciones auxiliares (copiadas de auth.py para evitar dependencias circulares si es necesario) ---
 async def get_user_by_username(username: str, db: AsyncIOMotorDatabase):
     users_collection = db["users"]
@@ -19,8 +19,8 @@ async def get_user_by_username(username: str, db: AsyncIOMotorDatabase):
         # Asegúrate de que phone_ext y department_id sean strings si son ints en la DB
         if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
             user_data['phone_ext'] = str(user_data['phone_ext'])
-        if 'department_id' in user_data and isinstance(user_data['department_id'], int):
-            user_data['department_id'] = str(user_data['department_id'])
+        if 'department' in user_data and isinstance(user_data['department'], int):
+            user_data['department'] = str(user_data['department'])
         return UserInDB(**user_data)
     return None
 
@@ -30,8 +30,8 @@ async def get_user_by_email(email: str, db: AsyncIOMotorDatabase):
     if user_data:
         if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
             user_data['phone_ext'] = str(user_data['phone_ext'])
-        if 'department_id' in user_data and isinstance(user_data['department_id'], int):
-            user_data['department_id'] = str(user_data['department_id'])
+        if 'department' in user_data and isinstance(user_data['department'], int):
+            user_data['department'] = str(user_data['department'])
         return UserInDB(**user_data)
     return None
 
@@ -41,8 +41,8 @@ async def get_user_by_phone_ext(phone_ext: str, db: AsyncIOMotorDatabase):
     if user_data:
         if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
             user_data['phone_ext'] = str(user_data['phone_ext'])
-        if 'department_id' in user_data and isinstance(user_data['department_id'], int):
-            user_data['department_id'] = str(user_data['department_id'])
+        if 'department' in user_data and isinstance(user_data['department'], int):
+            user_data['department'] = str(user_data['department'])
         return UserInDB(**user_data)
     return None
 
@@ -64,12 +64,12 @@ async def build_user_response(user_doc: dict, db: AsyncIOMotorDatabase) -> UserR
     # Esto es una conversión de tipo si la DB los guarda como int, para que Pydantic los acepte como str
     if 'phone_ext' in user_doc and isinstance(user_doc['phone_ext'], int):
         user_doc['phone_ext'] = str(user_doc['phone_ext'])
-    if 'department_id' in user_doc and isinstance(user_doc['department_id'], int):
-        user_doc['department_id'] = str(user_doc['department_id'])
+    if 'department' in user_doc and isinstance(user_doc['department'], int):
+        user_doc['department'] = str(user_doc['department'])
 
     department_info = None
-    if user_doc.get("department_id"):
-        department = await get_department_by_id(user_doc["department_id"], db)
+    if user_doc.get("department"):
+        department = await get_department_by_id(user_doc["department"], db)
         if department:
             department_info = department # Esto ya es una instancia de DepartmentResponse
 
@@ -81,11 +81,11 @@ async def build_user_response(user_doc: dict, db: AsyncIOMotorDatabase) -> UserR
         "email": user_doc.get("email"),
         "fullname": user_doc.get("fullname"),
         "phone_ext": user_doc.get("phone_ext"),
-        "department_id": user_doc.get("department_id"),
+        "department": user_doc.get("department"),
         "status": user_doc.get("status"),
         "role": user_doc.get("role"),
-        "created_at": user_doc.get("created_at"),
-        "updated_at": user_doc.get("updated_at"),
+        "createdAt": user_doc.get("createdAt"),
+        "updatedAt": user_doc.get("updatedAt"),
         "department": department_info,
     }
     
@@ -94,6 +94,10 @@ async def build_user_response(user_doc: dict, db: AsyncIOMotorDatabase) -> UserR
 
     return UserResponse(**user_response_data)
 
+# Ruta para obtener el usuario actual
+@router.get("/me")
+async def read_current_user(current_user: User = Depends(get_current_user)):
+    return current_user
 
 # Ruta para obtener todos los usuarios
 @router.get("/", response_model=List[UserResponse])
@@ -167,8 +171,8 @@ async def create_user(
     
     user_dict = user.dict(exclude_unset=True)
     user_dict["password"] = hashed_password
-    user_dict["created_at"] = datetime.utcnow()
-    user_dict["updated_at"] = datetime.utcnow()
+    user_dict["createdAt"] = datetime.utcnow()
+    user_dict["updatedAt"] = datetime.utcnow()
     user_dict["role"] = user.role
 
     result = await users_collection.insert_one(user_dict)
@@ -205,7 +209,7 @@ async def update_user(
     if "password" in update_data:
         update_data["password"] = hash_password(update_data["password"])
     
-    update_data["updated_at"] = datetime.utcnow()
+    update_data["updatedAt"] = datetime.utcnow()
 
     result = await users_collection.update_one(
         {"_id": object_id},
