@@ -249,10 +249,9 @@ async def delete_user(
     
     return {"message": "Usuario eliminado correctamente"}
 
-# Ruta para obtener colaboradores de un departamento específico
 @router.get("/departamento/{department_id}/colaboradores", response_model=List[UserResponse])
 async def get_colaboradores_del_departamento(
-    department_id: str,
+    department_id: str,  # Cambiado de 'department' a 'department_id'
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: UserInDB = Depends(get_current_user) # Requiere autenticación
 ):
@@ -261,7 +260,14 @@ async def get_colaboradores_del_departamento(
     """
     users_collection = db["users"]
     
-    colaboradores_data = await users_collection.find({"department_id": department_id}).to_list(None)
+    # Convertir department_id string a ObjectId para la consulta
+    try:
+        department_object_id = ObjectId(department_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID de departamento inválido.")
+    
+    # La consulta usa el nombre de campo de MongoDB 'department' con ObjectId
+    colaboradores_data = await users_collection.find({"department": department_object_id}).to_list(None)
 
     if not colaboradores_data:
         return []
@@ -270,4 +276,4 @@ async def get_colaboradores_del_departamento(
     for user_doc in colaboradores_data:
         response_colaboradores.append(await build_user_response(user_doc, db))
     
-    return response_colaboradores
+    return response_colaboradores  # Corregida la indentación

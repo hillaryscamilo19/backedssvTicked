@@ -4,6 +4,7 @@ from jose import JWTError, jwt
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
+from bson import ObjectId # Importar ObjectId
 
 from app.db.dbp import get_db
 from motor.motor_asyncio import AsyncIOMotorDatabase # Importa el tipo correcto para la DB
@@ -12,17 +13,36 @@ from config import SECRET_KEY, ALGORITHM # Importa tus variables de configuraci�
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Función auxiliar para obtener el usuario por username (copiada de auth.py)
+# Función auxiliar para obtener el usuario por username (CORREGIDA para convertir ObjectId)
 async def get_user_by_username(username: str, db: AsyncIOMotorDatabase):
     users_collection = db["users"]
     user_data = await users_collection.find_one({"username": username})
     if user_data:
-        # Asegúrate de que phone_ext y department_id sean strings si son ints en la DB
-        if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
-            user_data['phone_ext'] = str(user_data['phone_ext'])
-        if 'department_id' in user_data and isinstance(user_data['department_id'], int):
-            user_data['department_id'] = str(user_data['department_id'])
-        return UserInDB(**user_data)
+        # Crear una copia para evitar modificar el original
+        user_data_copy = user_data.copy()
+        
+        # Convertir phone_ext a string si es int
+        if 'phone_ext' in user_data_copy and isinstance(user_data_copy['phone_ext'], int):
+            user_data_copy['phone_ext'] = str(user_data_copy['phone_ext'])
+        
+        # CORRECCIÓN CRÍTICA: Convertir department ObjectId a string si es necesario
+        if 'department' in user_data_copy:
+            if isinstance(user_data_copy['department'], ObjectId):
+                user_data_copy['department'] = str(user_data_copy['department'])
+            elif user_data_copy['department'] is None:
+                user_data_copy['department'] = None
+            # Si ya es string, lo dejamos como está
+        
+        # Eliminar campos que no son parte del modelo UserInDB
+        if '__v' in user_data_copy:
+            del user_data_copy['__v']
+
+        # DEBUG: Imprimir para verificar la conversión
+        print(f"DEBUG - user_data_copy antes de UserInDB: {user_data_copy}")
+        print(f"DEBUG - department type: {type(user_data_copy.get('department'))}")
+        print(f"DEBUG - department value: {user_data_copy.get('department')}")
+
+        return UserInDB(**user_data_copy)
     return None
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncIOMotorDatabase = Depends(get_db)):
@@ -39,9 +59,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncIOMotor
     except JWTError:
         raise credentials_exception
     
-    # --- CORRECCIÓN AQUÍ: Usar la función get_user_by_username para MongoDB ---
     user = await get_user_by_username(username, db)
-    # --- FIN CORRECCIÓN ---
 
     if user is None:
         raise credentials_exception

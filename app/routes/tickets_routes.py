@@ -6,19 +6,70 @@ from bson import ObjectId
 from datetime import datetime
 import os
 import traceback
-
 from app.db.dbp import get_db
 from app.Schemas.Esquema import TicketCreate, TicketUpdate, TicketResponse, UserInDB, CategoryResponse, DepartmentResponse, MessageCreate, AttachmentCreate, AttachmentResponse, MessageResponse
 from app.auth.dependencies import get_current_user
 from app.models import tickets_model, categories_model
 from app.models.user_model import obtener_user_por_id, obtener_users_by_department_id
-from app.models.attachments_model import crear_attachment # Asegúrate de que esta función exista y sea correcta
-from app.models.messages_model import crear_message, obtener_mensaje_por_id # Importa obtener_mensaje_por_id
-
+from app.models.attachments_model import crear_attachment
+from app.models.messages_model import crear_message, obtener_mensaje_por_id
 from fastapi import BackgroundTasks
 from fastapi import UploadFile, File
 
 router = APIRouter()
+
+# --- Función auxiliar para construir respuesta de usuario (CORREGIDA) ---
+async def build_user_response_for_ticket(user_doc: dict, db: AsyncIOMotorDatabase) -> dict:
+    """
+    Función auxiliar para construir respuesta de usuario específicamente para tickets.
+    Mapea los campos de MongoDB a los nombres esperados por Pydantic.
+    """
+    if not user_doc:
+        return None
+    
+    # Mapear _id a id
+    user_id_str = str(user_doc["_id"]) if "_id" in user_doc else None
+
+    # Mapear phone_ext a string si es int
+    phone_ext_str = str(user_doc['phone_ext']) if 'phone_ext' in user_doc and isinstance(user_doc['phone_ext'], int) else user_doc.get('phone_ext')
+
+    # Mapear 'department' (ObjectId) a 'department_id' (string)
+    department_id_from_db = user_doc.get("department")
+    department_id_str = str(department_id_from_db) if isinstance(department_id_from_db, ObjectId) else department_id_from_db
+
+    # Obtener información del departamento si existe
+    department_info = None
+    if department_id_str:
+        from app.models.departments_model import obtener_department_por_id
+        department = await obtener_department_por_id(db, department_id_str)
+        if department:
+            # Mapear fechas del departamento si son camelCase
+            dept_created_at = department.get("createdAt") or department.get("created_at")
+            dept_updated_at = department.get("updatedAt") or department.get("updated_at")
+            
+            department_info = {
+                "id": str(department["_id"]),
+                "name": department.get("name"),
+                "created_at": dept_created_at,
+                "updated_at": dept_updated_at
+            }
+
+    # Construir el diccionario de respuesta del usuario
+    user_response_data = {
+        "id": user_id_str,
+        "username": user_doc.get("username"),
+        "email": user_doc.get("email"),
+        "fullname": user_doc.get("fullname"),
+        "phone_ext": phone_ext_str,
+        "department": department_id_str,
+        "status": user_doc.get("status"),
+        "role": user_doc.get("role"),
+        "created_at": user_doc.get("createdAt"), # Usar 'createdAt' de MongoDB
+        "updated_at": user_doc.get("updatedAt"), # Usar 'updatedAt' de MongoDB
+        "department": department_info,
+    }
+    
+    return user_response_data
 
 # --- Funciones auxiliares para construir respuestas anidadas ---
 async def build_ticket_response(ticket_doc: dict, db: AsyncIOMotorDatabase) -> TicketResponse:
@@ -28,23 +79,23 @@ async def build_ticket_response(ticket_doc: dict, db: AsyncIOMotorDatabase) -> T
         raise ValueError("Ticket document is missing _id")
 
     # Mapeo y conversión de IDs de MongoDB a strings para los campos directos del esquema
-    # Los campos 'category', 'assigned_department', 'created_user' en MongoDB son ObjectIds
-    category_id_val = ticket_doc.get("category")
-    category_id_str = str(category_id_val) if isinstance(category_id_val, ObjectId) else None
+    # Los campos 'category_id', 'assigned_department_id', 'created_by' en MongoDB son ObjectIds o strings
+    category_id_val = ticket_doc.get("category_id")
+    category_id_str = str(category_id_val) if category_id_val else None
 
-    assigned_department_id_val = ticket_doc.get("assigned_department")
-    assigned_department_id_str = str(assigned_department_id_val) if isinstance(assigned_department_id_val, ObjectId) else None
+    assigned_department_id_val = ticket_doc.get("assigned_department_id")
+    assigned_department_id_str = str(assigned_department_id_val) if assigned_department_id_val else None
 
-    created_by_val = ticket_doc.get("created_user")
-    created_by_str = str(created_by_val) if isinstance(created_by_val, ObjectId) else None
+    created_by_val = ticket_doc.get("created_by")
+    created_by_str = str(created_by_val) if created_by_val else None
     
-    # Manejar assigned_users: lista de ObjectIds en MongoDB a lista de strings en Pydantic
+    # Manejar assigned_to: lista de ObjectIds en MongoDB a lista de strings en Pydantic
     assigned_to_list_str = []
-    if "assigned_users" in ticket_doc and isinstance(ticket_doc["assigned_users"], list):
-        for user_oid in ticket_doc["assigned_users"]:
+    if "assigned_to" in ticket_doc and isinstance(ticket_doc["assigned_to"], list):
+        for user_oid in ticket_doc["assigned_to"]:
             if isinstance(user_oid, ObjectId):
                 assigned_to_list_str.append(str(user_oid))
-            elif isinstance(user_oid, str): # Si ya es un string, lo mantenemos
+            elif isinstance(user_oid, str):
                 assigned_to_list_str.append(user_oid)
 
     # Manejar status y priority (asegurar que sean strings)
@@ -56,54 +107,68 @@ async def build_ticket_response(ticket_doc: dict, db: AsyncIOMotorDatabase) -> T
     if category_id_str:
         category = await categories_model.obtener_category_por_id(db, category_id_str)
         if category:
-            category_info = CategoryResponse(**category)
+            # Mapear fechas de categoría si son camelCase
+            cat_created_at = category.get("createdAt") or category.get("created_at")
+            cat_updated_at = category.get("updatedAt") or category.get("updated_at")
+            
+            category_info = CategoryResponse(
+                id=str(category["_id"]),
+                name=category.get("name"),
+                description=category.get("description"),
+                created_at=cat_created_at,
+                updated_at=cat_updated_at
+            )
 
     assigned_department_info = None
     if assigned_department_id_str:
         from app.models.departments_model import obtener_department_por_id
         department = await obtener_department_por_id(db, assigned_department_id_str)
         if department:
-            assigned_department_info = DepartmentResponse(**department)
+            # Mapear fechas del departamento si son camelCase
+            dept_created_at = department.get("createdAt") or department.get("created_at")
+            dept_updated_at = department.get("updatedAt") or department.get("updated_at")
+            
+            assigned_department_info = DepartmentResponse(
+                id=str(department["_id"]),
+                name=department.get("name"),
+                created_at=dept_created_at,
+                updated_at=dept_updated_at
+            )
 
     created_user_info = None
     if created_by_str:
         created_user = await obtener_user_por_id(db, created_by_str)
         if created_user:
-            from app.routes.user_routes import build_user_response as build_user_response_helper
-            created_user_info = await build_user_response_helper(created_user, db)
+            created_user_info = await build_user_response_for_ticket(created_user, db)
 
     assigned_users_info = []
     for user_id in assigned_to_list_str:
         assigned_user = await obtener_user_por_id(db, user_id)
         if assigned_user:
-            from app.routes.user_routes import build_user_response as build_user_response_helper
-            assigned_users_info.append(await build_user_response_helper(assigned_user, db))
+            user_response = await build_user_response_for_ticket(assigned_user, db)
+            if user_response:
+                assigned_users_info.append(user_response)
     
     messages_info = []
-    # NUEVA LÓGICA PARA MENSAJES: Iterar sobre los ObjectIds incrustados en el documento del ticket
     if "messages" in ticket_doc and isinstance(ticket_doc["messages"], list):
         for msg_oid in ticket_doc["messages"]:
             if isinstance(msg_oid, ObjectId):
                 msg_data = await obtener_mensaje_por_id(db, str(msg_oid))
                 if msg_data:
-                    # Asegurar que los IDs sean strings para el esquema MessageResponse
                     messages_info.append(MessageResponse(
                         id=str(msg_data["_id"]),
                         message=msg_data.get("message"),
                         ticket_id=str(msg_data.get("ticket_id")),
                         created_by_id=str(msg_data.get("created_by_id")),
-                        created_at=msg_data.get("created_at")
+                        created_at=msg_data.get("created_at") if msg_data.get("created_at") else datetime.utcnow()
                     ))
 
     attachments_info = []
-    # Lógica actual para attachments (consultando por ticket_id en la colección de attachments)
-    # Esto es correcto si los attachments no están incrustados como OIDs en el documento del ticket.
     attachments_collection = db["attachments"]
     ticket_attachments = await attachments_collection.find({"ticket_id": ticket_id_str}).to_list(None)
     for att_doc in ticket_attachments:
         att_doc_id = str(att_doc["_id"]) if "_id" in att_doc else None
         att_ticket_id = str(att_doc["ticket_id"]) if "ticket_id" in att_doc else None
-        # Asegúrate de que uploaded_by sea un string si es un ObjectId
         att_uploaded_by = str(att_doc["uploaded_by"]) if "uploaded_by" in att_doc and isinstance(att_doc["uploaded_by"], ObjectId) else None
         
         if att_doc_id and att_ticket_id:
@@ -123,12 +188,12 @@ async def build_ticket_response(ticket_doc: dict, db: AsyncIOMotorDatabase) -> T
         "description": ticket_doc.get("description"),
         "status": final_status,
         "priority": final_priority,
-        "category_id": category_id_str, # Mapeado desde 'category' de MongoDB
-        "assigned_to": assigned_to_list_str, # Mapeado desde 'assigned_users' de MongoDB
-        "assigned_department_id": assigned_department_id_str, # Mapeado desde 'assigned_department' de MongoDB
-        "created_by": created_by_str, # Mapeado desde 'created_user' de MongoDB
-        "created_at": ticket_doc.get("createdAt"), # Usar el nombre de campo de MongoDB
-        "updated_at": ticket_doc.get("updatedAt"), # Usar el nombre de campo de MongoDB
+        "category_id": category_id_str,
+        "assigned_to": assigned_to_list_str,
+        "assigned_department_id": assigned_department_id_str,
+        "created_by": created_by_str,
+        "createdAt": ticket_doc.get("createdAt"), # Usar el nombre de campo de MongoDB 'created_at'
+        "updatedAt": ticket_doc.get("updatedAt"), # Usar el nombre de campo de MongoDB 'updated_at'
         "category": category_info,
         "assigned_department": assigned_department_info,
         "created_user": created_user_info,
@@ -142,16 +207,20 @@ async def build_ticket_response(ticket_doc: dict, db: AsyncIOMotorDatabase) -> T
 # Generar nombre con base en el nombre original y numeración de 4 dígitos
 def generar_nombre_incremental(nombre_base, extension, carpeta="app/uploads"):
     archivos = os.listdir(carpeta)
-    # Filtrar los archivos que empiezan con el nombre_base
     numeros = []
     for f in archivos:
         if f.startswith(nombre_base + "_") and f.endswith("." + extension):
-            parte = f[len(nombre_base) + 1 : -(len(extension) + 1)] # Extrae el número
+            parte = f[len(nombre_base) + 1 : -(len(extension) + 1)]
             if parte.isdigit():
                 numeros.append(int(parte))
     siguiente = max(numeros, default=0) + 1
     numero_formateado = f"{siguiente:04d}"
     return f"{nombre_base}_{numero_formateado}.{extension}"
+
+def chunked_list(lst, chunk_size=100):
+    for i in range(0, len(lst), chunk_size):
+        yield lst[i:i + chunk_size]
+
 
 # 1. Obtener todos los tickets
 @router.get("/", response_model=List[TicketResponse])
@@ -181,50 +250,35 @@ async def create_ticket(
     current_user: UserInDB = Depends(get_current_user)
 ):
     ticket_dict = data.dict()
-    ticket_dict["created_by"] = str(current_user.id) # Usar el ID de MongoDB del usuario
-    ticket_dict["status"] = str(ticket_dict.get("status", 0)) # Asegurar que el estado sea string
-    ticket_dict["priority"] = str(ticket_dict.get("priority", 0)) # Asegurar que la prioridad sea string
+    ticket_dict["created_by"] = str(current_user.id)
+    ticket_dict["status"] = str(ticket_dict.get("status", 0))
+    ticket_dict["priority"] = str(ticket_dict.get("priority", 0))
 
-    if ticket_dict.get("category_id") == "0" or not ticket_dict.get("category_id"): # Ajustar a string "0"
+    if ticket_dict.get("category_id") == "0" or not ticket_dict.get("category_id"):
         ticket_dict["category_id"] = None
-    if ticket_dict.get("assigned_department_id") == "0" or not ticket_dict.get("assigned_department_id"): # Ajustar a string "0"
+    if ticket_dict.get("assigned_department_id") == "0" or not ticket_dict.get("assigned_department_id"):
         ticket_dict["assigned_department_id"] = None
     
-    # Si assigned_to es una lista de IDs de usuario, asegúrate de que sean strings
     if "assigned_to" in ticket_dict and ticket_dict["assigned_to"] is not None:
         ticket_dict["assigned_to"] = [str(uid) for uid in ticket_dict["assigned_to"]]
     else:
-        ticket_dict["assigned_to"] = [] # Asegurar que sea una lista vacía si no se asigna
+        ticket_dict["assigned_to"] = []
 
     created_ticket_data = await tickets_model.crear_ticket(db, ticket_dict)
     if not created_ticket_data:
         raise HTTPException(status_code=500, detail="Error al crear el ticket en la base de datos.")
 
-    # ✅ Obtener usuarios del departamento y sus correos para notificación
-    # Asegúrate de que obtener_users_by_department_id devuelva una lista de diccionarios de usuario
     recipient_emails = []
     if created_ticket_data.get("assigned_department_id"):
         dept_users_data = await obtener_users_by_department_id(db, created_ticket_data["assigned_department_id"])
         recipient_emails = [user["email"] for user in dept_users_data if user.get("email") and user.get("status") == True]
         
-        # ✅ Enviar notificación en segundo plano (descomenta si tienes la implementación)
-        # notification_data = TicketNotification(
-        #     ticket_id=str(created_ticket_data["_id"]),
-        #     title=created_ticket_data["title"],
-        #     description=created_ticket_data["description"],
-        #     category_id=created_ticket_data.get("category_id"),
-        #     assigned_department_id=created_ticket_data.get("assigned_department_id"),
-        #     created_user_id=created_ticket_data["created_by"],
-        #     recipient_emails=recipient_emails
-        # )
-        # background_tasks.add_task(notify_ticket_created, notification_data)
-    
     return await build_ticket_response(created_ticket_data, db)
 
 # 4. Actualizar ticket estado
 @router.put("/{ticket_id}/estado")
 async def actualizar_estado_ticket(
-    ticket_id: str, # ID de MongoDB es string
+    ticket_id: str,
     estado_id: int,
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: UserInDB = Depends(get_current_user)
@@ -248,15 +302,13 @@ async def actualizar_estado_ticket(
         if not ticket_data:
             raise HTTPException(status_code=404, detail="Ticket no encontrado")
         
-        # Convertir el estado del ticket a int para comparación si es necesario
         current_ticket_status_int = int(ticket_data.get("status", 0))
 
-        if current_ticket_status_int in {0, 5}: # 0: Cancelado, 5: Completado
+        if current_ticket_status_int in {0, 5}:
             raise HTTPException(status_code=400, detail="No se puede cambiar el estado de un ticket que ya está cancelado o completado")
         
         es_creador = str(current_user.id) == str(ticket_data.get("created_by"))
         
-        # Para assigned_users, necesitamos obtener los IDs de los usuarios asignados
         assigned_users_ids = [str(uid) for uid in ticket_data.get("assigned_to", [])]
         es_asignado = str(current_user.id) in assigned_users_ids
 
@@ -270,7 +322,7 @@ async def actualizar_estado_ticket(
             raise HTTPException(status_code=403, detail="Solo el creador o asignados pueden marcarlo en espera")
         if estado_id == 4 and not es_asignado:
             raise HTTPException(status_code=403, detail="Solo usuarios asignados pueden marcarlo en revisión")
-        if estado_id == 5 and not (es_creador or str(current_user.department_id) == str(ticket_data.get("assigned_department_id"))):
+        if estado_id == 5 and not (es_creador or str(current_user.department) == str(ticket_data.get("assigned_department_id"))):
             raise HTTPException(status_code=403, detail="Solo el creador o miembros del departamento asignado pueden marcarlo como completado")
         
         updated_ticket_data = await tickets_model.actualizar_ticket(db, ticket_id, {"status": estado_str})
@@ -290,8 +342,8 @@ async def actualizar_estado_ticket(
 # 7. Asignar usuarios al ticket
 @router.post("/{ticket_id}/asignar-usuarios")
 async def asignar_usuarios_a_ticket(
-    ticket_id: str, # ID de MongoDB es string
-    asignaciones: List[str], # Lista de IDs de usuario (strings)
+    ticket_id: str,
+    asignaciones: List[str],
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: UserInDB = Depends(get_current_user)
 ):
@@ -300,16 +352,15 @@ async def asignar_usuarios_a_ticket(
         raise HTTPException(status_code=404, detail="Ticket no encontrado")
     
     current_ticket_status_int = int(ticket_data.get("status", 0))
-    if current_ticket_status_int in {0, 5}: # 0: Cancelado, 5: Completado
+    if current_ticket_status_int in {0, 5}:
         raise HTTPException(status_code=400, detail="No se pueden asignar usuarios a un ticket cancelado o completado")
     
-    if str(ticket_data.get("assigned_department_id")) != str(current_user.department_id):
+    if str(ticket_data.get("assigned_department_id")) != str(current_user.department):
         raise HTTPException(status_code=403, detail="Solo el departamento asignado al ticket puede asignar usuarios")
     
     usuarios_asignados_actuales = set(ticket_data.get("assigned_to", []))
     
-    # Validar que los usuarios a asignar existen y pertenecen al departamento del usuario actual
-    valid_users_in_department = await obtener_users_by_department_id(db, str(current_user.department_id))
+    valid_users_in_department = await obtener_users_by_department_id(db, str(current_user.department))
     valid_user_ids_in_department = {str(u["_id"]) for u in valid_users_in_department}
 
     usuarios_a_asignar_validos = []
@@ -327,7 +378,7 @@ async def asignar_usuarios_a_ticket(
         )
     
     nuevos_asignados_count = 0
-    updated_assigned_to = list(usuarios_asignados_actuales) # Copia la lista actual
+    updated_assigned_to = list(usuarios_asignados_actuales)
     for user_id in usuarios_a_asignar_validos:
         if user_id not in usuarios_asignados_actuales:
             updated_assigned_to.append(user_id)
@@ -336,7 +387,6 @@ async def asignar_usuarios_a_ticket(
     if nuevos_asignados_count == 0:
         raise HTTPException(status_code=400, detail="El usuario ya estaba asignado al ticket o no se proporcionaron nuevos usuarios válidos.")
     
-    # Actualizar el campo 'assigned_to' en el documento del ticket
     updated_ticket = await tickets_model.actualizar_ticket(db, ticket_id, {"assigned_to": updated_assigned_to})
     if not updated_ticket:
         raise HTTPException(status_code=500, detail="Error al actualizar la asignación de usuarios en el ticket.")
@@ -345,8 +395,8 @@ async def asignar_usuarios_a_ticket(
 
 @router.delete("/{ticket_id}/quitar-usuarios")
 async def quitar_usuarios_de_ticket(
-    ticket_id: str, # ID de MongoDB es string
-    usuarios_a_quitar: List[str], # Lista de IDs de usuario (strings)
+    ticket_id: str,
+    usuarios_a_quitar: List[str],
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: UserInDB = Depends(get_current_user)
 ):
@@ -355,16 +405,15 @@ async def quitar_usuarios_de_ticket(
         raise HTTPException(status_code=404, detail="Ticket no encontrado")
     
     current_ticket_status_int = int(ticket_data.get("status", 0))
-    if current_ticket_status_int in {0, 5}: # 0: Cancelado, 5: Completado
+    if current_ticket_status_int in {0, 5}:
         raise HTTPException(status_code=400, detail="No se pueden modificar usuarios de un ticket cancelado o completado")
     
-    if str(ticket_data.get("assigned_department_id")) != str(current_user.department_id):
+    if str(ticket_data.get("assigned_department_id")) != str(current_user.department):
         raise HTTPException(status_code=403, detail="Solo el departamento asignado al ticket puede modificar usuarios")
     
     usuarios_asignados_actuales = set(ticket_data.get("assigned_to", []))
     
-    # Validar que los usuarios a quitar realmente están asignados y pertenecen al departamento del usuario actual
-    valid_users_in_department = await obtener_users_by_department_id(db, str(current_user.department_id))
+    valid_users_in_department = await obtener_users_by_department_id(db, str(current_user.department))
     valid_user_ids_in_department = {str(u["_id"]) for u in valid_users_in_department}
 
     usuarios_a_quitar_validos = []
@@ -409,11 +458,11 @@ async def get_tickets_asignados_a_mi(db: AsyncIOMotorDatabase = Depends(get_db),
 # 9. Obtener tickets asignados al departamento del usuario
 @router.get("/asignados-departamento/", response_model=List[TicketResponse])
 async def get_tickets_departamento(db: AsyncIOMotorDatabase = Depends(get_db), current_user: UserInDB = Depends(get_current_user)):
-    if not current_user.department_id:
+    if not current_user.department:
         return []
 
     tickets_collection = db["tickets"]
-    tickets_data = await tickets_collection.find({"assigned_department_id": str(current_user.department_id)}).to_list(None)
+    tickets_data = await tickets_collection.find({"assigned_department_id": str(current_user.department)}).to_list(None)
 
     if not tickets_data:
         return []
@@ -438,9 +487,9 @@ async def get_tickets_creados(db: AsyncIOMotorDatabase = Depends(get_db), curren
 
     # Tickets creados por otros pero asignados al departamento del usuario
     departamento_response = []
-    if current_user.department_id:
+    if current_user.department:
         departamento_data = await tickets_collection.find({
-            "assigned_department_id": str(current_user.department_id),
+            "assigned_department_id": str(current_user.department),
             "created_by": {"$ne": str(current_user.id)}
         }).to_list(None)
         
@@ -465,7 +514,7 @@ async def crear_mensaje_ticket(
         raise HTTPException(status_code=404, detail="Ticket no encontrado")
     
     is_creator = str(current_user.id) == str(ticket_data.get("created_by"))
-    is_assigned_to_department = str(current_user.department_id) == str(ticket_data.get("assigned_department_id"))
+    is_assigned_to_department = str(current_user.department) == str(ticket_data.get("assigned_department_id"))
 
     if not (is_creator or is_assigned_to_department):
         raise HTTPException(status_code=403, detail="No tienes permiso para escribir en este ticket")
@@ -546,10 +595,10 @@ async def get_all_tickets_by_department_users(
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: UserInDB = Depends(get_current_user)
 ):
-    if not current_user.department_id:
+    if not current_user.department:
         return []
 
-    users_in_department = await obtener_users_by_department_id(db, str(current_user.department_id))
+    users_in_department = await obtener_users_by_department_id(db, str(current_user.department))
     user_ids_in_department = [str(u["_id"]) for u in users_in_department]
 
     tickets_collection = db["tickets"]

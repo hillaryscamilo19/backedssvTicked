@@ -6,7 +6,7 @@ class UserUpdate(BaseModel):
     fullname: Optional[str]
     email: Optional[EmailStr]
     phone_ext: Optional[int]
-    department_id: Optional[int]
+    department: Optional[int]
     role: Optional[int]
     username: Optional[str]
     status: Optional[bool]

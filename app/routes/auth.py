@@ -28,24 +28,13 @@ async def get_user_by_username(username: str, db: AsyncIOMotorDatabase):
     users_collection = db["users"]
     user_data = await users_collection.find_one({"username": username})
     if user_data:
-        # Mapear campos de MongoDB a nombres de Pydantic
+        # Solo convertir phone_ext a string si es int
         if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
             user_data['phone_ext'] = str(user_data['phone_ext'])
         
-        # Mapear 'department' a 'department_id'
+        # Convertir department ObjectId a string si es necesario
         if 'department' in user_data and isinstance(user_data['department'], ObjectId):
-            user_data['department_id'] = str(user_data.pop('department'))
-        elif 'department' in user_data and isinstance(user_data['department'], str):
-            user_data['department_id'] = user_data.pop('department')
-        else:
-            user_data['department_id'] = None # Asegurar que sea None si no existe o no es válido
-
-        # Mapear 'createdAt' a 'created_at'
-        if 'createdAt' in user_data:
-            user_data['created_at'] = user_data.pop('createdAt')
-        # Mapear 'updatedAt' a 'updated_at'
-        if 'updatedAt' in user_data:
-            user_data['updated_at'] = user_data.pop('updatedAt')
+            user_data['department'] = str(user_data['department'])
 
         return UserInDB(**user_data)
     return None
@@ -54,21 +43,13 @@ async def get_user_by_email(email: str, db: AsyncIOMotorDatabase):
     users_collection = db["users"]
     user_data = await users_collection.find_one({"email": email})
     if user_data:
-        # Mapear campos de MongoDB a nombres de Pydantic
+        # Solo convertir phone_ext a string si es int
         if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
             user_data['phone_ext'] = str(user_data['phone_ext'])
         
+        # Convertir department ObjectId a string si es necesario
         if 'department' in user_data and isinstance(user_data['department'], ObjectId):
-            user_data['department_id'] = str(user_data.pop('department'))
-        elif 'department' in user_data and isinstance(user_data['department'], str):
-            user_data['department_id'] = user_data.pop('department')
-        else:
-            user_data['department_id'] = None
-
-        if 'createdAt' in user_data:
-            user_data['created_at'] = user_data.pop('createdAt')
-        if 'updatedAt' in user_data:
-            user_data['updated_at'] = user_data.pop('updatedAt')
+            user_data['department'] = str(user_data['department'])
 
         return UserInDB(**user_data)
     return None
@@ -77,23 +58,25 @@ async def get_user_by_phone_ext(phone_ext: str, db: AsyncIOMotorDatabase):
     users_collection = db["users"]
     user_data = await users_collection.find_one({"phone_ext": phone_ext})
     if user_data:
-        # Mapear campos de MongoDB a nombres de Pydantic
-        if 'phone_ext' in user_data and isinstance(user_data['phone_ext'], int):
-            user_data['phone_ext'] = str(user_data['phone_ext'])
+        # Crear una copia para evitar modificar el original
+        user_data_copy = user_data.copy()
         
-        if 'department' in user_data and isinstance(user_data['department'], ObjectId):
-            user_data['department_id'] = str(user_data.pop('department'))
-        elif 'department' in user_data and isinstance(user_data['department'], str):
-            user_data['department_id'] = user_data.pop('department')
-        else:
-            user_data['department_id'] = None
+        # Convertir phone_ext a string si es int
+        if 'phone_ext' in user_data_copy and isinstance(user_data_copy['phone_ext'], int):
+            user_data_copy['phone_ext'] = str(user_data_copy['phone_ext'])
+        
+        # Convertir department ObjectId a string si es necesario
+        if 'department' in user_data_copy:
+            if isinstance(user_data_copy['department'], ObjectId):
+                user_data_copy['department'] = str(user_data_copy['department'])
+            elif user_data_copy['department'] is None:
+                user_data_copy['department'] = None
+        
+        # Eliminar campos que no son parte del modelo
+        if '__v' in user_data_copy:
+            del user_data_copy['__v']
 
-        if 'createdAt' in user_data:
-            user_data['created_at'] = user_data.pop('createdAt')
-        if 'updatedAt' in user_data:
-            user_data['updated_at'] = user_data.pop('updatedAt')
-
-        return UserInDB(**user_data)
+        return UserInDB(**user_data_copy)
     return None
 
 async def get_department_by_id(department_id: str, db: AsyncIOMotorDatabase):
@@ -104,48 +87,50 @@ async def get_department_by_id(department_id: str, db: AsyncIOMotorDatabase):
         return None # ID inválido
     department_data = await departments_collection.find_one({"_id": object_id})
     if department_data:
-        # Asegurarse de que los campos de fecha también se mapeen si son camelCase en DB
-        if 'createdAt' in department_data:
-            department_data['created_at'] = department_data.pop('createdAt')
-        if 'updatedAt' in department_data:
-            department_data['updated_at'] = department_data.pop('updatedAt')
-        return DepartmentResponse(**department_data)
+        # Crear una copia para evitar modificar el original
+        department_data_copy = department_data.copy()
+        
+        # Eliminar campos que no son parte del modelo
+        if '__v' in department_data_copy:
+            del department_data_copy['__v']
+            
+        return DepartmentResponse(**department_data_copy)
     return None
+
 
 # Función auxiliar para construir la respuesta de usuario con el departamento anidado (CORREGIDA)
 async def build_user_response(user_doc: dict, db: AsyncIOMotorDatabase) -> UserResponse:
-    # Mapear _id a id
-    user_id_str = str(user_doc["_id"]) if "_id" in user_doc else None
-
-    # Mapear phone_ext a string si es int
-    phone_ext_str = str(user_doc['phone_ext']) if 'phone_ext' in user_doc and isinstance(user_doc['phone_ext'], int) else user_doc.get('phone_ext')
-
-    # Mapear 'department' (ObjectId) a 'department_id' (string)
-    department_id_from_db = user_doc.get("department")
-    department_id_str = str(department_id_from_db) if isinstance(department_id_from_db, ObjectId) else department_id_from_db
-
-    department_info = None
-    if department_id_str:
-        department = await get_department_by_id(department_id_str, db)
-        if department:
-            department_info = department # Esto ya es una instancia de DepartmentResponse
-
-    # Construye el diccionario para UserResponse explícitamente
-    user_response_data = {
-        "id": user_id_str,
-        "username": user_doc.get("username"),
-        "email": user_doc.get("email"),
-        "fullname": user_doc.get("fullname"),
-        "phone_ext": phone_ext_str,
-        "department_id": department_id_str, # Usar el ID de departamento mapeado
-        "status": user_doc.get("status"),
-        "role": user_doc.get("role"),
-        "created_at": user_doc.get("createdAt"), # Usar 'createdAt' de MongoDB
-        "updated_at": user_doc.get("updatedAt"), # Usar 'updatedAt' de MongoDB
-        "department": department_info,
-    }
+    # Crear una copia para evitar modificar el original
+    user_doc_copy = user_doc.copy()
     
-    return UserResponse(**user_response_data)
+    # Convertir phone_ext a string si es int
+    if 'phone_ext' in user_doc_copy and isinstance(user_doc_copy['phone_ext'], int):
+        user_doc_copy['phone_ext'] = str(user_doc_copy['phone_ext'])
+
+    # Obtener información del departamento si existe
+    department_info = None
+    if user_doc_copy.get("department"):
+        department_id = str(user_doc_copy["department"]) if isinstance(user_doc_copy["department"], ObjectId) else user_doc_copy["department"]
+        department = await get_department_by_id(department_id, db)
+        if department:
+            department_info = department
+
+    # Convertir department ObjectId a string para la respuesta
+    if 'department' in user_doc_copy:
+        if isinstance(user_doc_copy['department'], ObjectId):
+            user_doc_copy['department'] = str(user_doc_copy['department'])
+        elif user_doc_copy['department'] is None:
+            user_doc_copy['department'] = None
+
+    # Eliminar campos que no son parte del modelo
+    if '__v' in user_doc_copy:
+        del user_doc_copy['__v']
+
+    # Construir la respuesta
+    user_doc_copy['department_info'] = department_info  # Usar department_info para evitar conflicto
+    
+    return UserResponse(**user_doc_copy)
+
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -172,11 +157,9 @@ async def register(user: UserCreate, db: AsyncIOMotorDatabase = Depends(get_db))
     user_dict["createdAt"] = datetime.utcnow()
     user_dict["updatedAt"] = datetime.utcnow()
     user_dict["role"] = user.role
-    # Mapear department_id de Pydantic a 'department' para MongoDB
-    if user_dict.get("department_id"):
-        user_dict["department"] = ObjectId(user_dict.pop("department_id"))
-    else:
-        user_dict.pop("department_id", None) # Eliminar si es None
+    # Convertir department string a ObjectId si se proporciona
+    if user_dict.get("department"):
+        user_dict["department"] = ObjectId(user_dict["department"])
 
     result = await users_collection.insert_one(user_dict)
     
@@ -198,8 +181,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncIOMot
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario inactivo")
 
     department_data = None
-    if user.department_id: # user.department_id ahora debería ser un string
-        department_data = await get_department_by_id(user.department_id, db)
+    if user.department: # user.department ahora debería ser un string
+        department_data = await get_department_by_id(user.department, db)
 
     token = create_access_token(data={"sub": user.username})
     
@@ -214,8 +197,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncIOMot
             "phone_ext": user.phone_ext,
             "status": user.status,
             "role": user.role,
-            "created_at": user.created_at.isoformat() if user.created_at else None, # Asegurar isoformat
-            "updated_at": user.updated_at.isoformat() if user.updated_at else None, # Asegurar isoformat
+            "createdAt": user.createdAt.isoformat() if user.createdAt else None, # Asegurar isoformat
+            "updatedAt": user.updatedAt.isoformat() if user.updatedAt else None, # Asegurar isoformat
             "department": {
                 "id": str(department_data.id),
                 "name": department_data.name,

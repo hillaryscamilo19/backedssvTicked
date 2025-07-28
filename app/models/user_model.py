@@ -19,7 +19,7 @@ async def obtener_user_por_id(db: AsyncIOMotorDatabase, user_id: str) -> Optiona
 
 async def obtener_users_by_department_id(db: AsyncIOMotorDatabase, department_id: str) -> List[dict]:
     users_collection = db["users"]
-    users_data = await users_collection.find({"department_id": department_id}).to_list(None)
+    users_data = await users_collection.find({"department": department_id}).to_list(None)
     return users_data
 
 # Puedes añadir más funciones CRUD para usuarios aquí si las necesitas
@@ -61,8 +61,8 @@ def usuario_helper(usuario) -> dict:
             {"id": d.id, "name": d.name} for d in usuario.supervision_departments or []
         ],
         "status": usuario.status,
-        "createdAt": usuario.created_at,
-        "updatedAt": usuario.updated_at
+        "createdAt": usuario.createdAt,
+        "updatedAt": usuario.updatedAt
     }
 
 async def obtener_usuarios(db: AsyncSession):
@@ -75,7 +75,7 @@ async def obtener_usuarios(db: AsyncSession):
 
 async def update_fields(user: User, updated_data: dict, db: AsyncSession):
     allowed_fields = {
-        "status", "fullname", "email", "phone_ext", "department_id", "role", "username","password"
+        "status", "fullname", "email", "phone_ext", "department", "role", "username","password"
     }
 
     disallowed_fields = {"createdAt", "createdat", "createdAt", "id"}  # Puedes agregar más si es necesario
