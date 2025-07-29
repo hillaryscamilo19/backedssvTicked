@@ -6,6 +6,7 @@ from bson import ObjectId
 from datetime import datetime
 import os
 import traceback
+from bson import ObjectId
 from app.db.dbp import get_db
 from app.Schemas.Esquema import TicketCreate, TicketUpdate, TicketResponse, UserInDB, CategoryResponse, DepartmentResponse, MessageCreate, AttachmentCreate, AttachmentResponse, MessageResponse
 from app.auth.dependencies import get_current_user
@@ -393,6 +394,8 @@ async def asignar_usuarios_a_ticket(
 
     return {"message": f"{nuevos_asignados_count} usuario(s) asignado(s) correctamente"}
 
+
+
 @router.delete("/{ticket_id}/quitar-usuarios")
 async def quitar_usuarios_de_ticket(
     ticket_id: str,
@@ -441,13 +444,17 @@ async def quitar_usuarios_de_ticket(
 
     return {"message": f"{len(usuarios_a_quitar_validos)} usuario(s) quitado(s) correctamente"}
 
+
+
 # 8. Obtener tickets asignados al usuario actual
 @router.get("/asignados-a-mi/", response_model=List[TicketResponse])
-async def get_tickets_asignados_a_mi(db: AsyncIOMotorDatabase = Depends(get_db), current_user: UserInDB = Depends(get_current_user)):
+async def get_tickets_asignados_a_mi(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user)
+):
+    print("🧪 current_user.id:", current_user.id)  # DEBUG
     tickets_data = await tickets_model.obtener_tickets_asignados_a_usuario(db, str(current_user.id))
-
-    if not tickets_data:
-        return []
+    print("🎯 Tickets encontrados:", tickets_data)  # DEBUG
 
     response_tickets = []
     for ticket_doc in tickets_data:
@@ -462,7 +469,7 @@ async def get_tickets_departamento(db: AsyncIOMotorDatabase = Depends(get_db), c
         return []
 
     tickets_collection = db["tickets"]
-    tickets_data = await tickets_collection.find({"assigned_department_id": str(current_user.department)}).to_list(None)
+    tickets_data = await tickets_collection.find({"assigned_department": str(current_user.department)}).to_list(None)
 
     if not tickets_data:
         return []

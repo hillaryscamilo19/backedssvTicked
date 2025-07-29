@@ -1,18 +1,21 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
 from typing import List, Optional
+from bson import ObjectId, errors
 from datetime import datetime
-
+from bson import ObjectId, errors
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from typing import List
 # Ya no necesitamos la clase Ticket de SQLAlchemy aquí.
 # Solo funciones para interactuar con la colección de MongoDB.
+async def obtener_tickets_asignados_a_usuario(db: AsyncIOMotorDatabase, user_id: str) -> List[dict]:
+    try:
+        user_object_id = ObjectId(user_id)
+    except errors.InvalidId:
+        return []
 
-async def obtener_tickets(db: AsyncIOMotorDatabase) -> List[dict]:
-    """
-    Obtiene todos los tickets de la base de datos.
-    """
     tickets_collection = db["tickets"]
-    tickets_data = await tickets_collection.find({}).to_list(None)
-    return tickets_data
+    return await tickets_collection.find({"assigned_users": user_object_id}).to_list(None)
 
 async def obtener_ticket_por_id(db: AsyncIOMotorDatabase, ticket_id: str) -> Optional[dict]:
     """
@@ -31,8 +34,7 @@ async def obtener_tickets_asignados_a_usuario(db: AsyncIOMotorDatabase, user_id:
     Obtiene todos los tickets asignados a un usuario específico.
     """
     tickets_collection = db["tickets"]
-    # Asumiendo que 'assigned_to' en la colección de tickets guarda el ID del usuario como string
-    tickets_data = await tickets_collection.find({"assigned_to": user_id}).to_list(None)
+    tickets_data = await tickets_collection.find({"assigned_tickets": user_id}).to_list(None)
     return tickets_data
 
 async def crear_ticket(db: AsyncIOMotorDatabase, ticket_data: dict) -> dict:
@@ -79,5 +81,3 @@ async def eliminar_ticket(db: AsyncIOMotorDatabase, ticket_id: str) -> bool:
     return result.deleted_count > 0
 
 # La función ticket_helper ya no es necesaria aquí, su lógica se moverá a build_ticket_response en las rutas.
-
- 
