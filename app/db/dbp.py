@@ -4,9 +4,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGODB_DATABASE, MONGODB_HOST, MONGODB_PORT
 
 
-
-
-
 # Configuración de la URL de conexión de MongoDB
 # Dado que la URL proporcionada no tiene usuario/contraseña, simplificamos la URI
 MONGO_URI = f"mongodb://{MONGODB_HOST}:{MONGODB_PORT}/{MONGODB_DATABASE}"

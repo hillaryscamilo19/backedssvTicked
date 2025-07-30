@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -18,6 +18,21 @@ from fastapi import BackgroundTasks
 from fastapi import UploadFile, File
 
 router = APIRouter()
+
+
+
+# Convierte ObjectId y otros tipos no serializables a strings
+def serialize_doc(doc: dict) -> dict:
+
+    if not doc:
+        return doc
+    for k, v in doc.items():
+        if isinstance(v, ObjectId):
+            doc[k] = str(v)
+        elif isinstance(v, list):
+            doc[k] = [str(x) if isinstance(x, ObjectId) else x for x in v]
+    return doc
+
 
 # --- Función auxiliar para construir respuesta de usuario (CORREGIDA) ---
 async def build_user_response_for_ticket(user_doc: dict, db: AsyncIOMotorDatabase) -> dict:
@@ -394,8 +409,6 @@ async def asignar_usuarios_a_ticket(
 
     return {"message": f"{nuevos_asignados_count} usuario(s) asignado(s) correctamente"}
 
-
-
 @router.delete("/{ticket_id}/quitar-usuarios")
 async def quitar_usuarios_de_ticket(
     ticket_id: str,
@@ -445,31 +458,37 @@ async def quitar_usuarios_de_ticket(
     return {"message": f"{len(usuarios_a_quitar_validos)} usuario(s) quitado(s) correctamente"}
 
 
-
-# 8. Obtener tickets asignados al usuario actual
-@router.get("/asignados-a-mi/", response_model=List[TicketResponse])
-async def get_tickets_asignados_a_mi(
+# 8. 
+@router.get("/asignados-a-mi/")
+async def obtener_tickets_asignados_a_mi(
     db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    user_id: str = None
 ):
-    print("🧪 current_user.id:", current_user.id)  # DEBUG
-    tickets_data = await tickets_model.obtener_tickets_asignados_a_usuario(db, str(current_user.id))
-    print("🎯 Tickets encontrados:", tickets_data)  # DEBUG
-
-    response_tickets = []
-    for ticket_doc in tickets_data:
-        response_tickets.append(await build_ticket_response(ticket_doc, db))
+    try:
+        user_obj_id = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Hillarys pon antecion")
     
-    return response_tickets
+    tickets_collection = db["tickets"]
+    tickets = await tickets_collection.find({"assigned_users": user_obj_id}).to_list(length=None)
+    
+    # Serializar todos los documentos
+    tickets_serializados = [serialize_doc(ticket) for ticket in tickets]
+    return tickets_serializados
 
 # 9. Obtener tickets asignados al departamento del usuario
-@router.get("/asignados-departamento/", response_model=List[TicketResponse])
-async def get_tickets_departamento(db: AsyncIOMotorDatabase = Depends(get_db), current_user: UserInDB = Depends(get_current_user)):
-    if not current_user.department:
-        return []
+@router.get("/asignados-departamento/")
+async def get_tickets_departamento(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: str = None
+):
+    try:
+        user_obj_id = ObjectId(current_user)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Hillarys pon antecion")
 
     tickets_collection = db["tickets"]
-    tickets_data = await tickets_collection.find({"assigned_department": str(current_user.department)}).to_list(None)
+    tickets_data = await tickets_collection.find({"assigned_department": current_user}).to_list(None)
 
     if not tickets_data:
         return []
@@ -477,7 +496,6 @@ async def get_tickets_departamento(db: AsyncIOMotorDatabase = Depends(get_db), c
     response_tickets = []
     for ticket_doc in tickets_data:
         response_tickets.append(await build_ticket_response(ticket_doc, db))
-    
     return response_tickets
 
 # 10. Obtener tickets creados por el usuario y su departamento
