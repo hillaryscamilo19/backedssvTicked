@@ -2,9 +2,43 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
 from typing import List, Optional
 from datetime import datetime
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, func, select
+from app.db.base import Base
 
 # NO HAY IMPORTACIONES DE SQLAlchemy AQUÍ
 
+
+
+
+class Message(Base):
+    __tablename__ = "messages"
+    id = Column(Integer, primary_key=True)
+    message = Column(String)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+    ticket_id = Column(Integer, ForeignKey("tickets.id", ondelete="CASCADE"))
+    createdat = Column(DateTime(timezone=True), server_default=func.now())
+    updatedat = Column(DateTime(timezone=True), onupdate=func.now())
+
+    ticket = relationship("Ticket", back_populates="messages")
+    user = relationship("User", back_populates="messages", foreign_keys=[created_by_id])
+
+
+def messages_helper(message: Message):
+    return {
+        "id": message.id,
+        "message": message.message,
+        "created_by_id": message.created_by_id,
+        "ticket_id": message.ticket_id,
+        "created_at": message.createdat,
+        "updated_at": message.updatedat,
+    }
+
+async def obtener_mensajes(db: AsyncSession):
+    result = await db.execute(select(Message))
+    mensajes = result.scalars().all()
+    return [messages_helper(m) for m in mensajes]
 async def obtener_mensajes(db: AsyncIOMotorDatabase) -> List[dict]:
     """
     Obtiene todos los mensajes de la base de datos.

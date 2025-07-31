@@ -1,69 +1,47 @@
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from bson import ObjectId
-from typing import List, Optional
-from datetime import datetime
+from sqlalchemy import Boolean, String, Table, Column, Integer, ForeignKey, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import relationship
+from app.db.base import Base
+import app.models
 
-# NO HAY IMPORTACIONES DE SQLAlchemy AQUÍ
 
-async def obtener_departments(db: AsyncIOMotorDatabase) -> List[dict]:
-    """
-    Obtiene todos los departamentos de la base de datos.
-    """
-    departments_collection = db["departments"]
-    departments_data = await departments_collection.find({}).to_list(None)
-    return departments_data
+user_supervision_departments = Table(
+    "user_supervision_departments",
+    Base.metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE")),
+    Column("department_id", Integer, ForeignKey("departments.id", ondelete="CASCADE"))
+)
 
-async def obtener_department_por_id(db: AsyncIOMotorDatabase, department_id: str) -> Optional[dict]:
-    """
-    Obtiene un departamento por su ID.
-    """
-    departments_collection = db["departments"]
-    try:
-        object_id = ObjectId(department_id)
-    except Exception:
-        return None # ID inválido
-    department_data = await departments_collection.find_one({"_id": object_id})
-    return department_data
+class Department(Base):
+    __tablename__ = "departments"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    status = Column(Boolean)
 
-async def crear_department(db: AsyncIOMotorDatabase, department_data: dict) -> dict:
-    """
-    Crea un nuevo departamento en la base de datos.
-    """
-    departments_collection = db["departments"]
-    department_data["created_at"] = datetime.utcnow()
-    department_data["updated_at"] = datetime.utcnow()
-    result = await departments_collection.insert_one(department_data)
-    created_department = await departments_collection.find_one({"_id": result.inserted_id})
-    return created_department
-
-async def actualizar_department(db: AsyncIOMotorDatabase, department_id: str, update_data: dict) -> Optional[dict]:
-    """
-    Actualiza un departamento existente.
-    """
-    departments_collection = db["departments"]
-    try:
-        object_id = ObjectId(department_id)
-    except Exception:
-        return None # ID inválido
-    
-    update_data["updated_at"] = datetime.utcnow()
-    result = await departments_collection.update_one(
-        {"_id": object_id},
-        {"$set": update_data}
+    tickets = relationship("Ticket", back_populates="assigned_department")
+    category_departments = relationship("CategoryDepartment", back_populates="department")
+    users = relationship("User", back_populates="department")
+    supervised_by = relationship(
+        "User",
+        secondary=user_supervision_departments,
+        back_populates="supervision_departments"
     )
-    if result.matched_count == 0:
-        return None # Departamento no encontrado
-    updated_department = await departments_collection.find_one({"_id": object_id})
-    return updated_department
 
-async def eliminar_department(db: AsyncIOMotorDatabase, department_id: str) -> bool:
-    """
-    Elimina un departamento por su ID.
-    """
-    departments_collection = db["departments"]
+def departments_helper(department) -> dict:
+    return {
+        "id": department.id,
+        "name": department.name,
+        "status": True  # si tienes un campo real usa ese
+    }
+
+
+# Obtener todos los departamentos
+async def obtener_departments(db: AsyncSession):
     try:
-        object_id = ObjectId(department_id)
-    except Exception:
-        return False # ID inválido
-    result = await departments_collection.delete_one({"_id": object_id})
-    return result.deleted_count > 0
+        result = await db.execute(select(Department))
+        departamentos = result.scalars().all()
+        return [departments_helper(dep) for dep in departamentos]
+    except Exception as e:
+        raise e
+    

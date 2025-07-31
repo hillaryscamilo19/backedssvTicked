@@ -19,32 +19,37 @@ async def obtener_user_por_id(db: AsyncIOMotorDatabase, user_id: str) -> Optiona
 
 async def obtener_users_by_department_id(db: AsyncIOMotorDatabase, department_id: str) -> List[dict]:
     users_collection = db["users"]
-    users_data = await users_collection.find({"department": department_id}).to_list(None)
+    users_data = await users_collection.find({"department_id": department_id}).to_list(None)
     return users_data
 
 # Puedes añadir más funciones CRUD para usuarios aquí si las necesitas
 class User(Base):
     __tablename__ = 'users'
+
     id = Column(Integer, primary_key=True, index=True)
     fullname = Column(String)
     email = Column(String, unique=True, index=True)
-    phone_ext = Column(Integer)  
-    department = Column(Integer, ForeignKey("departments.id"))
+    phone_ext = Column(Integer)
+    
+    department_id = Column(Integer, ForeignKey("departments.id"))  # ✔️ FK nombrada correctamente
+    department = relationship("Department", back_populates="users")  # ✔️ Relación declarada bien
+    
     role = Column(Integer)
     username = Column(String, unique=True, index=True)
     password = Column(String)
     status = Column(Boolean)
     createdAt = Column("createdat", DateTime(timezone=True), server_default=func.now(), nullable=True)
     updatedAt = Column("updatedat", DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
     created_tickets = relationship("Ticket", back_populates="created_user")
     assigned_tickets = relationship("TicketAssignedUser", back_populates="user")
-    department = relationship("Department", back_populates="users")
     messages = relationship("Message", back_populates="user")
+
     supervision_departments = relationship(
         "Department",
         back_populates="supervised_by"
     )
-    
+
 def usuario_helper(usuario) -> dict:
     return {
         "id": usuario.id,
@@ -61,8 +66,8 @@ def usuario_helper(usuario) -> dict:
             {"id": d.id, "name": d.name} for d in usuario.supervision_departments or []
         ],
         "status": usuario.status,
-        "createdAt": usuario.createdAt,
-        "updatedAt": usuario.updatedAt
+        "createdAt": usuario.created_at,
+        "updatedAt": usuario.updated_at
     }
 
 async def obtener_usuarios(db: AsyncSession):
@@ -75,7 +80,7 @@ async def obtener_usuarios(db: AsyncSession):
 
 async def update_fields(user: User, updated_data: dict, db: AsyncSession):
     allowed_fields = {
-        "status", "fullname", "email", "phone_ext", "department", "role", "username","password"
+        "status", "fullname", "email", "phone_ext", "department_id", "role", "username","password"
     }
 
     disallowed_fields = {"createdAt", "createdat", "createdAt", "id"}  # Puedes agregar más si es necesario

@@ -10,7 +10,7 @@ class UserCreate(BaseModel):
     fullname: str
     email: str
     phone_ext: str
-    department: Optional["DepartmentResponse"] = None
+    department_id: Optional[str] = None
     username: str
     password: str
     status: bool = True
@@ -20,7 +20,7 @@ class UserUpdate(BaseModel):
     fullname: Optional[str] = None
     email: Optional[str] = None
     phone_ext: Optional[str] = None
-    department: Optional["DepartmentResponse"] = None
+    department_id: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
     status: Optional[bool] = None
@@ -35,12 +35,12 @@ class UserInDB(BaseModel):
     email: str
     fullname: str
     phone_ext: str
-    department: Optional[str] = None
+    department_id: Optional[str] = None
     password: str
     status: bool
     role: int
-    createdAt: Optional[datetime] = None
-    updatedAt: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         populate_by_name = True
@@ -56,11 +56,11 @@ class UserResponse(BaseModel):
     email: Optional[str] = None
     fullname: str
     phone_ext: str
-    department: Optional["DepartmentResponse"] = None
+    department_id: Optional[str] = None
     status: bool
     role: int
-    createdAt: Optional[datetime] = None
-    updatedAt: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     department: Optional["DepartmentResponse"] = None
 
     class Config:
@@ -195,8 +195,8 @@ class TicketUpdate(TicketBase):
 class TicketResponse(TicketBase):
     id: PyObjectId = Field(alias="_id")
     created_by: Optional[str] = None
-    createdAt: Optional[datetime] = None
-    updatedAt: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     category: Optional[CategoryResponse] = None
     assigned_department: Optional["DepartmentResponse"] = None
     created_user: Optional["UserResponse"] = None
