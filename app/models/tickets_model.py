@@ -6,6 +6,7 @@ from app.db.base import Base
 from sqlalchemy.ext.asyncio import AsyncSession
 import app.models
 from app.models.user_model import User
+from app.models.departments_model import Department
 
 
 class Ticket(Base):
