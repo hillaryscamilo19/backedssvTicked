@@ -12,7 +12,6 @@ user_supervision_departments = Table(
     Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE")),
     Column("department_id", Integer, ForeignKey("departments.id", ondelete="CASCADE"))
 )
-
 class Department(Base):
     __tablename__ = "departments"
     id = Column(Integer, primary_key=True)
@@ -27,7 +26,6 @@ class Department(Base):
         secondary=user_supervision_departments,
         back_populates="supervision_departments"
     )
-
 def departments_helper(department) -> dict:
     return {
         "id": department.id,

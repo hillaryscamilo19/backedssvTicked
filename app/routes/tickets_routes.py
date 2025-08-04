@@ -1,252 +1,283 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-from app.Schemas.user import PasswordReset, UserStatusUpdate, UserUpdate
-from app.auth.security import hash_password
-from app.Schemas.Esquema import UserCreate
-from app.db.dbp import get_db  
-from app.models.user_model import obtener_usuarios, usuario_helper, User, update_fields
+import traceback
+from typing import List
+from bson import ObjectId
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from app.auth.dependencies import get_current_user
+from app.db.dbp import get_db
+from app.models.tickets_model import Ticket, ticket_helper
+from app.models.ticket_assigned_user_model import TicketAssignedUser 
+from app.models.user_model import User
+from app.models.messages_model import Message, messages_helper
+from app.Schemas.Ticket import TicketCreate, TicketUpdate
+from app.Schemas.Message import MessageCreate
+from app.models.attachments_model import Attachment
+from fastapi import UploadFile, File
+import os
 
 router = APIRouter()
 
-# Ruta para obtener el usuario actual
-@router.get("/me")
-async def read_current_user(current_user: User = Depends(get_current_user)):
-    return current_user
+# Generar nombre con base en el nombre original y numeración de 4 dígitos
+def generar_nombre_incremental(nombre_base, extension, carpeta="app/uploads"):
+    archivos = os.listdir(carpeta)
+    numeros = []
+    for f in archivos:
+        if f.startswith(nombre_base + "_") and f.endswith("." + extension):
+            parte = f[len(nombre_base) + 1 : -(len(extension) + 1)]
+            if parte.isdigit():
+                numeros.append(int(parte))
+    siguiente = max(numeros, default=0) + 1
+    numero_formateado = f"{siguiente:04d}"
+    return f"{nombre_base}_{numero_formateado}.{extension}"
 
-# Ruta para obtener todos los usuarios
+# 1. Obtener todos los tickets
 @router.get("/")
-async def get_usuarios(db: AsyncSession = Depends(get_db) , current_user: User = Depends(get_current_user)):
-    return await obtener_usuarios(db)
+async def get_tickets(db=Depends(get_db), current_user: User = Depends(get_current_user)):
+    tickets = await db["tickets"].find().to_list(length=None)
+    return [ticket_helper(ticket) for ticket in tickets]
 
-# Ruta para obtener un usuario por el id
-@router.get("/{user_id}")
-async def get_user_by_id( user_id: int,current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(User)
-        .options(selectinload(User.department), selectinload(User.supervision_departments))
-        .filter(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
+# 2. Obtener ticket por ID
+@router.get("/{ticket_id}")
+async def get_ticket(ticket_id: str, db=Depends(get_db), current_user: User = Depends(get_current_user)):
+    ticket = await db["tickets"].find_one({"_id": ObjectId(ticket_id)})
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket no encontrado")
+    return ticket_helper(ticket)
 
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    return usuario_helper(user)
-
-
-# Ruta para crear un usuario
+# 3. Crear ticket
 @router.post("/")
-async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db), current_user : User = Depends(get_current_user)):
-    # Verificar si el usuario ya existe
-    result = await db.execute(select(User).filter(User.email == user.email))
-    user_db = result.scalar_one_or_none()
-    if user_db:
-        raise HTTPException(status_code=400, detail="El usuario ya existe")
-    # Crear el usuario
-    user_db = User(**user.dict())
-    db.add(user_db)
-    await db.commit()
-    await db.refresh(user_db)
-    return usuario_helper(user_db)
-
-
-# Ruta para actualizar un usuario
-@router.put("/estado/{user_id}")
-async def update_user( user_id: int, updated_data: dict, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    if current_user.role not in (0, 1, 2):
-        raise HTTPException(status_code=403, detail="No tienes permisos suficientes")
-
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    # Actualizar usuario con datos permitidos
-    updated_user = await update_fields(user, updated_data, db)
-
-    # Recargar usuario con relaciones para evitar error de lazy load en async
-    result = await db.execute(
-        select(User)
-        .options(selectinload(User.department), selectinload(User.supervision_departments))
-        .filter(User.id == updated_user.id)
-    )
-    user_with_relations = result.scalar_one_or_none()
-
-    return usuario_helper(user_with_relations)
-
-# Ruta para actualizar un usuarios completo 
-@router.put("/{user_id}")
-async def update_user(
-    user_id: int,
-    updated_data: UserUpdate,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+async def create_ticket(
+    data: TicketCreate,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in (0, 1, 2):
-        raise HTTPException(status_code=403, detail="No tienes permisos suficientes")
+    data_dict = data.dict()
+    data_dict["created_user_id"] = current_user.id
 
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalar_one_or_none()
+    if data_dict.get("category_id") == 0:
+        data_dict["category_id"] = None
+    if data_dict.get("assigned_department_id") in (None, 0, ""):
+        data_dict["assigned_department_id"] = None
 
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    new_ticket = await db["tickets"].insert_one(data_dict)
 
-    update_dict = updated_data.dict(exclude_unset=True)
+    # Obtener usuarios del departamento asignado
+    if data_dict.get("assigned_department_id"):
+        dept_users = await db["users"].find({
+            "department_id": data_dict["assigned_department_id"],
+            "status": True
+        }).to_list(length=None)
 
-    updated_user = await update_fields(user, update_dict, db)
+    # Retornar ticket
+    ticket = await db["tickets"].find_one({"_id": new_ticket.inserted_id})
+    return ticket_helper(ticket)
 
-    result = await db.execute(
-        select(User)
-        .options(
-            selectinload(User.department),
-            selectinload(User.supervision_departments)
-        )
-        .filter(User.id == updated_user.id)
-    )
-    user_with_relations = result.scalar_one_or_none()
-
-    return usuario_helper(user_with_relations)
-
-# NUEVA RUTA: Toggle de estado de usuario (activar/desactivar)
-@router.put("/{user_id}/toggle-status")
-async def toggle_user_status(
-    user_id: int,
-    status_data: UserStatusUpdate,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    try:
-        # Verificar permisos (solo administradores)
-        if current_user.role not in (0, 1, 2):
-            raise HTTPException(
-                status_code=403, 
-                detail="No tienes permisos para cambiar el estado de usuarios"
-            )
-
-        # Buscar el usuario
-        result = await db.execute(select(User).filter(User.id == user_id))
-        user = result.scalar_one_or_none()
-
-        if not user:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-        # No permitir que un usuario se desactive a sí mismo
-        if user.id == current_user.id:
-            raise HTTPException(
-                status_code=400, 
-                detail="No puedes cambiar tu propio estado"
-            )
-
-        # Actualizar el estado usando tu función update_fields existente
-        update_data = {"status": status_data.status}
-        updated_user = await update_fields(user, update_data, db)
-        
-        status_text = "activado" if updated_user.status else "desactivado"
-        
-        return {
-            "message": f"Usuario {status_text} exitosamente",
-            "user_id": updated_user.id,
-            "username": updated_user.username,
-            "new_status": updated_user.status
-        }
-        
-    except HTTPException:
-        # Re-lanzar HTTPExceptions tal como están
-        raise
-    except Exception as e:
-        await db.rollback()
-        print(f"Error en toggle_user_status: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
-        )
-
-# Ruta para restablecer contraseña
-@router.put("/{user_id}/reset-password")
-async def reset_user_password(
-    user_id: int,
-    password_data: PasswordReset,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    # Verificar permisos (solo administradores o el propio usuario)
-    if current_user.role not in (0, 1, 2) and current_user.id != user_id:
-        raise HTTPException(
-            status_code=403, 
-            detail="No tienes permisos para restablecer esta contraseña"
-        )
-
-    # Buscar el usuario
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    # Validar la nueva contraseña
-    if len(password_data.new_password) < 6:
-        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres")
-
-    # Hashear y actualizar la contraseña
-    hashed_password = hash_password(password_data.new_password)
-    
-    # Actualizar solo el campo de contraseña
-    user.password = hashed_password
-    await db.commit()
-    await db.refresh(user)
-
-    return {"message": "Contraseña restablecida exitosamente"}
-
-
-# Ruta para eliminar un usuario
-@router.delete("/{user_id}")
-async def delete_user( user_id: int,current_user=Depends(get_current_user),
-db: AsyncSession = Depends(get_db),):
-    if current_user.role not in (0, 1):
-        raise HTTPException(status_code=403, detail="No tienes permisos para eliminar usuarios")
-
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    await db.delete(user)
-    await db.commit()
-    return {"message": "Usuario eliminado exitosamente"}
-
-
-# Ruta para obtener colaboradores del departamento (solo activos)
-@router.get("/departamento/colaboradores")
-async def get_colaboradores_del_departamento(
-    db: AsyncSession = Depends(get_db),
+# 4. Actualizar ticket estado
+@router.put("/{ticket_id}/estado")
+async def actualizar_estado_ticket(
+    ticket_id: str,
+    estado_id: int,
+    db=Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if not current_user.department_id:
-        raise HTTPException(status_code=400, detail="El usuario no pertenece a ningún departamento.")
-
-    result = await db.execute(
-        select(User)
-        .filter(
-            User.department_id == current_user.department_id,
-            User.status == True,  # Solo usuarios activos
-            User.id != current_user.id  # Excluir al usuario actual
-        )
-    )
-    colaboradores = result.scalars().all()
-
-    return [
-        {
-            "id": u.id,
-            "fullname": u.fullname,
-            "email": u.email,
-            "phone_ext": u.phone_ext, 
-            "status": u.status,
-            "department_id": u.department_id,
+    try:
+        ESTADOS = {
+            0: "Cancelado",
+            1: "Abierto",
+            2: "Proceso",
+            3: "Espera",
+            4: "Revisión",
+            5: "Completado"
         }
-        for u in colaboradores
-    ]
+
+        if estado_id not in ESTADOS:
+            raise HTTPException(status_code=400, detail="ID de estado inválido")
+
+        ticket = await db["tickets"].find_one({"_id": ObjectId(ticket_id)})
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket no encontrado")
+
+        if ticket["status"] in {"0", "5"}:
+            raise HTTPException(status_code=400, detail="No se puede cambiar el estado de un ticket que ya está cancelado o completado")
+
+        # Validaciones de permisos
+        es_creador = current_user.id == ticket["created_user_id"]
+        es_asignado = current_user.id in [u["user_id"] for u in ticket["assigned_users"]]
+
+        if estado_id == 0 and not es_creador:
+            raise HTTPException(status_code=403, detail="Solo el creador puede cancelar el ticket")
+
+        ticket["status"] = str(estado_id)
+        await db["tickets"].update_one({"_id": ObjectId(ticket_id)}, {"$set": {"status": ticket["status"]}})
+
+        return {
+            "message": f"Estado actualizado correctamente a código {estado_id}",
+            "ticket": ticket_helper(ticket)
+        }
+
+    except HTTPException:
+        raise  # Deja pasar excepciones HTTP personalizadas
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Error interno al actualizar el estado del ticket")
+
+# 7. Asignar usuarios al ticket
+@router.post("/{ticket_id}/asignar-usuarios")
+async def asignar_usuarios_a_ticket(
+    ticket_id: str,
+    asignaciones: List[int],
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    ticket = await db["tickets"].find_one({"_id": ObjectId(ticket_id)})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket no encontrado")
+
+    if ticket["status"] in {"0", "5"}:
+        raise HTTPException(status_code=400, detail="No se pueden asignar usuarios a un ticket cancelado o completado")
+
+    if ticket["assigned_department_id"] != current_user.department_id:
+        raise HTTPException(status_code=403, detail="Solo el departamento asignado al ticket puede asignar usuarios")
+
+    usuarios_asignados_actuales = {u["user_id"] for u in ticket["assigned_users"]}
+
+    usuarios_validos = await db["users"].find({
+        "id": {"$in": asignaciones},
+        "department_id": current_user.department_id
+    }).to_list(length=None)
+
+    invalidos = set(asignaciones) - {u["id"] for u in usuarios_validos}
+    if invalidos:
+        raise HTTPException(status_code=400, detail=f"Los siguientes usuarios no pertenecen a tu departamento: {invalidos}")
+
+    nuevos_asignados = 0
+
+    for user_id in usuarios_validos:
+        if user_id not in usuarios_asignados_actuales:
+            asignado = TicketAssignedUser (ticket_id=ticket_id, user_id=user_id)
+            await db["ticket_assigned_users"].insert_one(asignado.dict())
+            nuevos_asignados += 1
+
+    if nuevos_asignados == 0:
+        raise HTTPException(status_code=400, detail="El usuario ya estaba asignado al ticket")
+
+    return {"message": f"{nuevos_asignados} usuario(s) asignado(s) correctamente"}
+
+# 8. Obtener tickets asignados al usuario actual
+@router.get("/asignados-a-mi/")
+async def get_tickets_asignados_a_mi(db=Depends(get_db), current_user: User = Depends(get_current_user)):
+    tickets = await db["tickets"].find({"assigned_users.user_id": current_user.id}).to_list(length=None)
+    return [ticket_helper(t) for t in tickets]
+
+# 9. Obtener tickets asignados al departamento del usuario
+@router.get("/asignados-departamento/")
+async def get_tickets_departamento(db=Depends(get_db), current_user: User = Depends(get_current_user)):
+    tickets = await db["tickets"].find({"assigned_department_id": current_user.department_id}).to_list(length=None)
+    return [ticket_helper(t) for t in tickets]
+
+# 10. Obtener tickets creados por el usuario y su departamento
+@router.get("/creados/")
+async def get_tickets_creados(db=Depends(get_db), current_user: User = Depends(get_current_user)):
+    mios = await db["tickets"].find({"created_user_id": current_user.id}).to_list(length=None)
+    departamento = await db["tickets"].find({
+        "assigned_department_id": current_user.department_id,
+        "created_user_id": {"$ne": current_user.id}
+    }).to_list(length=None)
+
+    return {
+        "mios": [ticket_helper(t) for t in mios],
+        "departamento": [ticket_helper(t) for t in departamento]
+    }
+
+# 11. Agregar mensaje a un ticket
+@router.post("/{ticket_id}/mensajes/")
+async def crear_mensaje_ticket(
+    ticket_id: str,
+    data: MessageCreate,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    ticket = await db["tickets"].find_one({"_id": ObjectId(ticket_id)})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket no encontrado")
+
+    if current_user.id != ticket["created_user_id"] and not any(
+        assignment["user_id"] == current_user.id for assignment in ticket["assigned_users"]
+    ):
+        raise HTTPException(status_code=403, detail="No tienes permiso para escribir en este ticket")
+
+    nuevo_mensaje = Message(
+        ticket_id=ticket_id,
+        created_by_id=current_user.id,
+        message=data.message
+    )
+    await db["messages"].insert_one(nuevo_mensaje.dict())
+
+    return {
+        "message": "Mensaje enviado correctamente",
+        "mensaje": messages_helper(nuevo_mensaje)
+    }
+
+# 12. Ruta para agregar un archivo a un ticket
+@router.post("/{ticket_id}/attachments")
+async def subir_attachment(
+    ticket_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    ticket = await db["tickets"].find_one({"_id": ObjectId(ticket_id)})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket no encontrado")
+
+    upload_folder = "app/uploads"
+    os.makedirs(upload_folder, exist_ok=True)
+
+    nombre_archivo = file.filename.rsplit(".", 1)[0].replace(" ", "_")
+    extension = file.filename.rsplit(".", 1)[-1].lower()
+    nombre_final = generar_nombre_incremental(nombre_archivo, extension, upload_folder)
+
+    relative_path = f"/uploads/{nombre_final}"
+    save_path = os.path.join(upload_folder, nombre_final)
+
+    try:
+        content = await file.read()
+        with open(save_path, "wb") as buffer:
+            buffer.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al guardar archivo: {str(e)}")
+
+    new_attachment = Attachment(
+        file_name=nombre_final,
+        file_path=relative_path,
+        file_extension=extension,
+        ticket_id=ticket_id
+    )
+    await db["attachments"].insert_one(new_attachment.dict())
+
+    base_url = str(request.base_url).rstrip("/")
+    file_url = f"{base_url}{relative_path}"
+
+    return JSONResponse(
+        status_code=201,
+        content={
+            "message": "Archivo subido exitosamente",
+            "attachment_id": new_attachment.id,
+            "file_path": new_attachment.file_path,
+            "file_url": file_url
+        }
+    )
+
+# 13. Obtener todos los tickets creados por usuarios del mismo departamento
+@router.get("/todos-creados-por-mi-departamento/")
+async def get_all_tickets_by_department_users(
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result_users = await db["users"].find({"department_id": current_user.department_id}).to_list(length=None)
+    user_ids = [user["id"] for user in result_users]
+
+    result_tickets = await db["tickets"].find({"created_user_id": {"$in": user_ids}}).to_list(length=None)
+    return [ticket_helper(ticket) for ticket in result_tickets]

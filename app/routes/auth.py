@@ -15,75 +15,72 @@ from sqlalchemy.orm import selectinload
 router = APIRouter()
 
 @router.post("/register", response_model=UserResponse)
-async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
+async def register(user: UserCreate, db=Depends(get_db)):
 
     # Verifica si usuario ya existe
-    result = await db.execute(select(User).filter(func.lower(User.username) == user.username.lower()))
-    existing_user = result.scalar_one_or_none()
+    existing_user = await db["users"].find_one({"username": user.username.lower()})
     if existing_user:
-        raise HTTPException(status_code=400, detail=" Usuarios Ya Existe !")
+        raise HTTPException(status_code=400, detail="Usuario ya existe!")
 
     # Verifica email
-    result = await db.execute(select(User).filter( func.lower(User.email) == user.email.lower()))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email Ya Existe !")
+    existing_email = await db["users"].find_one({"email": user.email.lower()})
+    if existing_email:
+        raise HTTPException(status_code=400, detail="Email ya existe!")
 
     # Verifica extensión telefónica
-    result = await db.execute(select(User).filter(User.phone_ext == user.phone_ext))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Extension Ya Existe !")
+    existing_phone_ext = await db["users"].find_one({"phone_ext": user.phone_ext})
+    if existing_phone_ext:
+        raise HTTPException(status_code=400, detail="Extensión ya existe!")
+
 
     # Crear usuario
-    new_user = User(
-        fullname=user.fullname,
-        email=user.email,
-        phone_ext=user.phone_ext,
-        department_id=user.department_id,  # ID directo
-        username=user.username,
-        password=hash_password(user.password),
-        status=user.status,
-        role=0,
-        created_at= datetime.datetime.utcnow(),
-        updated_at= datetime.datetime.utcnow(),
-    )
-    db.add(new_user)
-    await db.commit()
-    await db.refresh(new_user)
+    new_user = {
+        "fullname": user.fullname,
+        "email": user.email,
+        "phone_ext": user.phone_ext,
+        "department_id": user.department_id,  # ID directo
+        "username": user.username,
+        "password": hash_password(user.password),
+        "status": user.status,
+        "role": 0,
+        "created_at": datetime.datetime.utcnow(),
+        "updated_at": datetime.datetime.utcnow(),
+    }
+    
+    await db["users"].insert_one(new_user)
 
     return UserResponse(
-        id=new_user.id,
-        username=new_user.username,
-        email=new_user.email,
+        id=str(new_user["_id"]),  # MongoDB usa _id como identificador
+        username=new_user["username"],
+        email=new_user["email"],
     )
 
 @router.post("/token")
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db=Depends(get_db)):
     # Primero obtenemos el usuario
-    result = await db.execute(select(User).filter(User.username == form_data.username))
-    user = result.scalar_one_or_none()
+    user = await db["users"].find_one({"username": form_data.username})
 
-    if not user or not verify_password(form_data.password, user.password):
+    if not user or not verify_password(form_data.password, user["password"]):
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrecto")
     
-    if not user.status:
+    if not user["status"]:
         raise HTTPException(status_code=401, detail="Usuario inactivo")
 
     # Luego, si el usuario tiene department_id, hacemos otra consulta para obtenerlo
     department = None
-    if user.department_id:
-        result = await db.execute(select(Department).filter(Department.id == user.department_id))
-        department = result.scalar_one_or_none()
+    if user.get("department_id"):
+        department = await db["departments"].find_one({"_id": ObjectId(user["department_id"])})
 
-    token = create_access_token(data={"sub": user.username})
+    token = create_access_token(data={"sub": user["username"]})
 
     return {
         "access_token": token,
         "token_type": "bearer",
         "user": {
-            "id": user.id,
+            "id": str(user["_id"]),
             "department": {
-                "id": department.id,
-                "name": department.name,
+                "id": str(department["_id"]),
+                "name": department["name"],
             } if department else None,
         }
-    }
+}
