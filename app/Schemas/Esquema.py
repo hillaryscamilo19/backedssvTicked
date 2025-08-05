@@ -10,7 +10,7 @@ class UserCreate(BaseModel):
     fullname: str
     email: str
     phone_ext: str
-    department_id: Optional[str] = None
+    department: Optional[str] = None
     username: str
     password: str
     status: bool = True
@@ -20,7 +20,7 @@ class UserUpdate(BaseModel):
     fullname: Optional[str] = None
     email: Optional[str] = None
     phone_ext: Optional[str] = None
-    department_id: Optional[str] = None
+    department: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
     status: Optional[bool] = None
@@ -35,12 +35,12 @@ class UserInDB(BaseModel):
     email: str
     fullname: str
     phone_ext: str
-    department_id: Optional[str] = None
+    department: Optional[str] = None
     password: str
     status: bool
     role: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    createdAt: Optional[datetime] = None
+    updatedAt: Optional[datetime] = None
 
     class Config:
         populate_by_name = True
@@ -56,11 +56,11 @@ class UserResponse(BaseModel):
     email: Optional[str] = None
     fullname: str
     phone_ext: str
-    department_id: Optional[str] = None
+    department: Optional[str] = None
     status: bool
     role: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    createdAt: Optional[datetime] = None
+    updatedAt: Optional[datetime] = None
     department: Optional["DepartmentResponse"] = None
 
     class Config:
@@ -82,7 +82,7 @@ class DepartmentUpdate(DepartmentBase):
 
 class DepartmentResponse(DepartmentBase):
     id: PyObjectId = Field(alias="_id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    createdAt: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
@@ -107,8 +107,8 @@ class CategoryUpdate(CategoryBase):
 
 class CategoryResponse(CategoryBase):
     id: PyObjectId = Field(alias="_id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    createdAt: datetime = Field(default_factory=datetime.utcnow)
+    updatedAt: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
         populate_by_name = True
@@ -132,7 +132,7 @@ class MessageResponse(MessageBase):
     id: PyObjectId = Field(alias="_id")
     ticket_id: str
     created_by_id: str
-    created_at: Optional[datetime] = None # CAMBIO AQUÍ: HECHO OPCIONAL
+    createdAt: Optional[datetime] = None # CAMBIO AQUÍ: HECHO OPCIONAL
 
     class Config:
         populate_by_name = True
@@ -160,7 +160,7 @@ class AttachmentResponse(AttachmentBase):
     id: PyObjectId = Field(alias="_id")
     ticket_id: str
     uploaded_by: Optional[str] = None
-    created_at: Optional[datetime] = None # CAMBIO AQUÍ: HECHO OPCIONAL
+    createdAt: Optional[datetime] = None # CAMBIO AQUÍ: HECHO OPCIONAL
 
     class Config:
         populate_by_name = True
@@ -178,7 +178,7 @@ class TicketBase(BaseModel):
     priority: str = "0"
     category_id: Optional[str] = None
     assigned_to: Optional[List[str]] = Field(default_factory=list)
-    assigned_department_id: Optional[str] = None
+    assigned_department: Optional[str] = None
 
 class TicketCreate(TicketBase):
     pass
@@ -190,13 +190,13 @@ class TicketUpdate(TicketBase):
     priority: Optional[str] = None
     category_id: Optional[str] = None
     assigned_to: Optional[List[str]] = None
-    assigned_department_id: Optional[str] = None
+    assigned_department: Optional[str] = None
 
 class TicketResponse(TicketBase):
     id: PyObjectId = Field(alias="_id")
     created_by: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    createdAt: Optional[datetime] = None
+    updatedAt: Optional[datetime] = None
     category: Optional[CategoryResponse] = None
     assigned_department: Optional["DepartmentResponse"] = None
     created_user: Optional["UserResponse"] = None

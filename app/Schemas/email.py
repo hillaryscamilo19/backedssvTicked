@@ -14,7 +14,7 @@ class TicketNotification(BaseModel):
     title: str
     description: str
     category_id: Optional[int]
-    assigned_department_id: Optional[int]
+    assigned_department: Optional[int]
     created_user_id: Optional[int]
     status: Optional[str] = "1"
 
@@ -22,7 +22,7 @@ class User(BaseModel):
     id: str
     email: EmailStr
     fullname: Optional[str] = None
-    department_id: Optional[str] = None
+    department: Optional[str] = None
     status: bool = True
 
 class EmailResponse(BaseModel):

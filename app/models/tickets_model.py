@@ -9,16 +9,18 @@ from app.models.user_model import User
 from app.models.departments_model import Department
 
 
+
+
 class Ticket:
     def __init__(self, **kwargs):
         self.id = str(kwargs.get("_id"))  # Convertir ObjectId a string
         self.title = kwargs.get("title")
         self.description = kwargs.get("description")
-        self.category_id = kwargs.get("category_id")
-        self.assigned_department_id = kwargs.get("assigned_department_id")
-        self.created_user_id = kwargs.get("created_user_id")
+        self.category = kwargs.get("category")
+        self.assigned_department = kwargs.get("assigned_department")
+        self.created_user = kwargs.get("created_user")
         self.status = kwargs.get("status")
-        self.created_at = kwargs.get("createdAt")
+        self.createdAt = kwargs.get("createdAt")
         self.updated_at = kwargs.get("updatedAt")
         self.category = kwargs.get("category")
         self.assigned_department = kwargs.get("assigned_department")
@@ -70,7 +72,7 @@ def ticket_helper(ticket) -> dict:
             {
                 "id": str(msg.get("_id")),  # Convertir ObjectId a string
                 "content": msg.get("message"),
-                "created_at": msg.get("createdAt"),
+                "createdAt": msg.get("createdAt"),
                 "user": {
                     "id": str(msg.get("user", {}).get("_id")),
                     "fullname": msg.get("user", {}).get("fullname")

@@ -73,7 +73,7 @@ class TicketNotification(BaseModel):
     title: str
     description: str
     category_id: Optional[int]
-    assigned_department_id: Optional[int]
+    assigned_department: Optional[int]
     created_user_id: Optional[int]
     status: Optional[str] = "1"
     recipient_emails: List[EmailStr]  # <-- Agregado
@@ -82,7 +82,7 @@ class User(BaseModel):
     id: str
     email: EmailStr
     fullname: Optional[str] = None
-    department_id: Optional[str] = None
+    department: Optional[str] = None
     status: bool = True
 
 class EmailResponse(BaseModel):
@@ -250,7 +250,7 @@ async def notify_ticket_created(notification_data: TicketNotification):
                     <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
                         <p><strong>Número de Ticket:</strong> #{notification_data.ticket_id}</p>
                         <p><strong>Título:</strong> "{notification_data.title}"</p>
-                        <p><strong>Departamento:</strong> {notification_data.assigned_department_id.name}</p>
+                        <p><strong>Departamento:</strong> {notification_data.assigned_department.name}</p>
                         <p><strong>Fecha:</strong> {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
                     </div>
                     <div style="background-color: #dbeafe; padding: 15px; border-radius: 8px;">
@@ -275,7 +275,7 @@ async def notify_ticket_created(notification_data: TicketNotification):
         
         Número de Ticket: #{notification_data.ticket_id}
         Título: "{notification_data.title}"
-        Departamento: {notification_data.assigned_department_id}
+        Departamento: {notification_data.assigned_department}
         Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}
         
         Se ha creado un nuevo ticket. Favor revisar y proceder según corresponda.

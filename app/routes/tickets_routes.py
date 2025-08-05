@@ -56,15 +56,15 @@ async def create_ticket(
 
     if data_dict.get("category_id") == 0:
         data_dict["category_id"] = None
-    if data_dict.get("assigned_department_id") in (None, 0, ""):
-        data_dict["assigned_department_id"] = None
+    if data_dict.get("assigned_department") in (None, 0, ""):
+        data_dict["assigned_department"] = None
 
     new_ticket = await db["tickets"].insert_one(data_dict)
 
     # Obtener usuarios del departamento asignado
-    if data_dict.get("assigned_department_id"):
+    if data_dict.get("assigned_department"):
         dept_users = await db["users"].find({
-            "department_id": data_dict["assigned_department_id"],
+            "department": data_dict["assigned_department"],
             "status": True
         }).to_list(length=None)
 
@@ -137,14 +137,14 @@ async def asignar_usuarios_a_ticket(
     if ticket["status"] in {"0", "5"}:
         raise HTTPException(status_code=400, detail="No se pueden asignar usuarios a un ticket cancelado o completado")
 
-    if ticket["assigned_department_id"] != current_user.department_id:
+    if ticket["assigned_department"] != current_user.department:
         raise HTTPException(status_code=403, detail="Solo el departamento asignado al ticket puede asignar usuarios")
 
     usuarios_asignados_actuales = {u["user_id"] for u in ticket["assigned_users"]}
 
     usuarios_validos = await db["users"].find({
         "id": {"$in": asignaciones},
-        "department_id": current_user.department_id
+        "department": current_user.department
     }).to_list(length=None)
 
     invalidos = set(asignaciones) - {u["id"] for u in usuarios_validos}
@@ -173,7 +173,7 @@ async def get_tickets_asignados_a_mi(db=Depends(get_db), current_user: User = De
 # 9. Obtener tickets asignados al departamento del usuario
 @router.get("/asignados-departamento/")
 async def get_tickets_departamento(db=Depends(get_db), current_user: User = Depends(get_current_user)):
-    tickets = await db["tickets"].find({"assigned_department_id": current_user.department_id}).to_list(length=None)
+    tickets = await db["tickets"].find({"assigned_department": current_user.department}).to_list(length=None)
     return [ticket_helper(t) for t in tickets]
 
 # 10. Obtener tickets creados por el usuario y su departamento
@@ -181,7 +181,7 @@ async def get_tickets_departamento(db=Depends(get_db), current_user: User = Depe
 async def get_tickets_creados(db=Depends(get_db), current_user: User = Depends(get_current_user)):
     mios = await db["tickets"].find({"created_user_id": current_user.id}).to_list(length=None)
     departamento = await db["tickets"].find({
-        "assigned_department_id": current_user.department_id,
+        "assigned_department": current_user.department,
         "created_user_id": {"$ne": current_user.id}
     }).to_list(length=None)
 
@@ -276,7 +276,7 @@ async def get_all_tickets_by_department_users(
     db=Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result_users = await db["users"].find({"department_id": current_user.department_id}).to_list(length=None)
+    result_users = await db["users"].find({"department": current_user.department}).to_list(length=None)
     user_ids = [user["id"] for user in result_users]
 
     result_tickets = await db["tickets"].find({"created_user_id": {"$in": user_ids}}).to_list(length=None)

@@ -12,13 +12,13 @@ class User(Base):
     fullname = Column(String)
     email = Column(String, unique=True, index=True)
     phone_ext = Column(Integer)  
-    department_id = Column(Integer, ForeignKey("departments.id"))
+    department = Column(Integer, ForeignKey("departments.id"))
     role = Column(Integer)
     username = Column(String, unique=True, index=True)
     password = Column(String)
     status = Column(Boolean)
-    created_at = Column("createdat", DateTime(timezone=True), server_default=func.now(), nullable=True)
-    updated_at = Column("updatedat", DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    createdAt = Column("createdat", DateTime(timezone=True), server_default=func.now(), nullable=True)
+    updatedAt = Column("updatedat", DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     created_tickets = relationship("Ticket", back_populates="created_user")
     assigned_tickets = relationship("TicketAssignedUser", back_populates="user")
@@ -46,8 +46,8 @@ def usuario_helper(usuario) -> dict:
             {"id": d.id, "name": d.name} for d in usuario.supervision_departments or []
         ],
         "status": usuario.status,
-        "createdAt": usuario.created_at,
-        "updatedAt": usuario.updated_at
+        "createdAt": usuario.createdAt,
+        "updatedAt": usuario.updatedAt
     }
 
 async def obtener_usuarios(db: AsyncSession):
@@ -60,10 +60,10 @@ async def obtener_usuarios(db: AsyncSession):
 
 async def update_fields(user: User, updated_data: dict, db: AsyncSession):
     allowed_fields = {
-        "status", "fullname", "email", "phone_ext", "department_id", "role", "username","password"
+        "status", "fullname", "email", "phone_ext", "department", "role", "username","password"
     }
 
-    disallowed_fields = {"created_at", "createdat", "createdAt", "id"}  # Puedes agregar más si es necesario
+    disallowed_fields = {"updatedAt", "createdat", "createdAt", "id"}  # Puedes agregar más si es necesario
 
     # Validar que no se esté intentando modificar campos no permitidos
     for key in updated_data:

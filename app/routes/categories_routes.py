@@ -107,4 +107,3 @@ async def delete_category(
         raise HTTPException(status_code=404, detail="Categoría no encontrada.")
     
     return {"message": "Categoría eliminada correctamente"}
-0

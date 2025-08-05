@@ -30,8 +30,8 @@ async def crear_category(db: AsyncIOMotorDatabase, category_data: dict) -> dict:
     Crea una nueva categoría en la base de datos.
     """
     categories_collection = db["categories"]
-    category_data["created_at"] = datetime.utcnow()
-    category_data["updated_at"] = datetime.utcnow()
+    category_data["createdAt"] = datetime.utcnow()
+    category_data["updatedAt"] = datetime.utcnow()
     result = await categories_collection.insert_one(category_data)
     created_category = await categories_collection.find_one({"_id": result.inserted_id})
     return created_category

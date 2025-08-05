@@ -1,4 +1,5 @@
 import datetime
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -38,13 +39,13 @@ async def register(user: UserCreate, db=Depends(get_db)):
         "fullname": user.fullname,
         "email": user.email,
         "phone_ext": user.phone_ext,
-        "department_id": user.department_id,  # ID directo
+        "department": user.department,  # ID directo
         "username": user.username,
         "password": hash_password(user.password),
         "status": user.status,
         "role": 0,
-        "created_at": datetime.datetime.utcnow(),
-        "updated_at": datetime.datetime.utcnow(),
+        "createdAt": datetime.datetime.utcnow(),
+        "updatedAt": datetime.datetime.utcnow(),
     }
     
     await db["users"].insert_one(new_user)
@@ -68,8 +69,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db=Depends(get
 
     # Luego, si el usuario tiene department_id, hacemos otra consulta para obtenerlo
     department = None
-    if user.get("department_id"):
-        department = await db["departments"].find_one({"_id": ObjectId(user["department_id"])})
+    if user.get("department"):
+        department = await db["departments"].find_one({"_id": ObjectId(user["department"])})
 
     token = create_access_token(data={"sub": user["username"]})
 

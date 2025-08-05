@@ -31,8 +31,8 @@ def messages_helper(message: Message):
         "message": message.message,
         "created_by_id": message.created_by_id,
         "ticket_id": message.ticket_id,
-        "created_at": message.createdat,
-        "updated_at": message.updatedat,
+        "createdAt": message.createdat,
+        "updatedAt": message.updatedat,
     }
 
 async def obtener_mensajes(db: AsyncSession):
@@ -65,7 +65,7 @@ async def crear_message(db: AsyncIOMotorDatabase, message_data: dict) -> dict:
     Crea un nuevo mensaje en la base de datos.
     """
     messages_collection = db["messages"]
-    message_data["created_at"] = datetime.utcnow()
+    message_data["createdAt"] = datetime.utcnow()
     result = await messages_collection.insert_one(message_data)
     created_message = await messages_collection.find_one({"_id": result.inserted_id})
     return created_message

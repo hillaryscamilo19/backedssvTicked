@@ -17,7 +17,7 @@ class TicketCreate(BaseModel):
     title: str
     description: str
     category_id: Optional[int]
-    assigned_department_id: Optional[int]
+    assigned_department: Optional[int]
     created_user_id: Optional[int]
     status: Optional[str] = "1"
 
@@ -25,7 +25,7 @@ class TicketUpdate(BaseModel):
     title: Optional[str]
     description: Optional[str]
     category_id: Optional[int]
-    assigned_department_id: Optional[int]
+    assigned_department: Optional[int]
     status: Optional[str]
 
 class TicketInDB(TicketBase):
@@ -36,8 +36,8 @@ class TicketInDB(TicketBase):
     assigned_users: Optional[list[User]] = []
     messages: Optional[list] = []
     attachments: Optional[list] = []
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    createdAt: Optional[datetime] = None
+    updatedAt: Optional[datetime] = None
 
     class Config:
         json_encoders = {ObjectId: str}

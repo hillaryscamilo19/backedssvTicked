@@ -1,9 +1,21 @@
 from pydantic import BaseModel
 
-class DepartmentCreate(BaseModel):
+class Department(BaseModel):
+    id: int
     name: str
-    status: bool = True
+    status: bool
+
 
 class DepartmentUpdate(BaseModel):
-    name: str | None = None
-    status: bool | None = None
+    name: str 
+    status: bool
+
+
+class DepartmentResponse(BaseModel):
+    id: int
+    name: str
+    status: bool
+
+class DepartmentCreate(BaseModel):
+    name: str
+    status: bool 

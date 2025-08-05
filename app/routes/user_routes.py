@@ -3,11 +3,11 @@ from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId # Necesario para manejar ObjectId de MongoDB
 from datetime import datetime
-
 from app.db.dbp import get_db
 from app.Schemas.Esquema import UserCreate, UserUpdate, UserResponse, UserInDB, DepartmentResponse
 from app.auth.dependencies import get_current_user # Mantén esta importación si necesitas autenticación
 from app.auth.security import hash_password
+from app.models.departments_model import Department
 from app.models.user_model import User # Para el registro o actualización de contraseña
 
 router = APIRouter()
@@ -250,24 +250,18 @@ async def delete_user(
     return {"message": "Usuario eliminado correctamente"}
 
 # Ruta para obtener colaboradores de un departamento específico
-@router.get("/departamento/{department_id}/colaboradores", response_model=List[UserResponse])
-async def get_colaboradores_del_departamento(
-    department_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user) # Requiere autenticación
-):
-    """
-    Obtiene todos los colaboradores de un departamento específico.
-    """
+@router.get("/departamento/{department_id}/colaboradores")
+async def get_colaboradores_del_departamento(department_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
+    print(f"Ruta llamada: /departamento/{department_id}/colaboradores")
     users_collection = db["users"]
-    
     colaboradores_data = await users_collection.find({"department_id": department_id}).to_list(None)
-
-    if not colaboradores_data:
-        return []
-
-    response_colaboradores = []
-    for user_doc in colaboradores_data:
-        response_colaboradores.append(await build_user_response(user_doc, db))
     
-    return response_colaboradores
+    if not colaboradores_data:
+        print("No se encontraron colaboradores.")
+        raise HTTPException(status_code=404, detail="No se encontraron colaboradores para este departamento.")
+    
+    print(f"Colaboradores encontrados: {colaboradores_data}")
+    return colaboradores_data
+
+
+
