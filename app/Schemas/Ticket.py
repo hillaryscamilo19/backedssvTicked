@@ -8,7 +8,20 @@ from app.Schemas.Esquema import PyObjectId
 from app.models.departments_model import Department
 from app.models.user_model import User
 
+class TicketCreate(BaseModel):
+    title: str
+    description: str
+    category_id: Optional[int]
+    assigned_department_id: Optional[int]
+    created_user_id: Optional[int]
+    status: Optional[str] = "1"
 
+class TicketUpdate(BaseModel):
+    title: Optional[str]
+    description: Optional[str]
+    category_id: Optional[int]
+    assigned_department_id: Optional[int]
+    status: Optional[str]
 class TicketBase(BaseModel):
     title: str
     description: str
@@ -30,6 +43,7 @@ class TicketUpdate(BaseModel):
 
 class TicketInDB(TicketBase):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    title: Optional[str]
     category: Optional[Category] = None
     assigned_department: Optional[Department] = None
     created_user: Optional[User] = None
@@ -43,3 +57,5 @@ class TicketInDB(TicketBase):
         json_encoders = {ObjectId: str}
         allow_population_by_field_name = True
         arbitrary_types_allowed = True
+
+

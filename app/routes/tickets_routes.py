@@ -281,3 +281,4 @@ async def get_all_tickets_by_department_users(
 
     result_tickets = await db["tickets"].find({"created_user_id": {"$in": user_ids}}).to_list(length=None)
     return [ticket_helper(ticket) for ticket in result_tickets]
+ 
