@@ -15,6 +15,8 @@ from app.models.attachments_model import Attachment
 from fastapi import UploadFile, File
 import os
 
+from app.utils.email_utils import send_email
+
 router = APIRouter()
 
 # Generar nombre con base en el nombre original y numeración de 4 dígitos
@@ -51,26 +53,57 @@ async def create_ticket(
     db=Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    data_dict = data.dict()
-    data_dict["created_user_id"] = current_user.id
+    data_dict = data.dict()  # Convertir a diccionario
+    data_dict["created_user_id"] = str(current_user.id)
 
-    if data_dict.get("category_id") == 0:
-        data_dict["category_id"] = None
+    # Manejar campos opcionales
+    if data_dict.get("category") == 0:
+        data_dict["category"] = None
     if data_dict.get("assigned_department") in (None, 0, ""):
         data_dict["assigned_department"] = None
 
+    # Crear el nuevo ticket en MongoDB
     new_ticket = await db["tickets"].insert_one(data_dict)
+    created_ticket = await db["tickets"].find_one({"_id": new_ticket.inserted_id})
 
     # Obtener usuarios del departamento asignado
     if data_dict.get("assigned_department"):
-        dept_users = await db["users"].find({
-            "department": data_dict["assigned_department"],
-            "status": True
-        }).to_list(length=None)
+        dept_users = await db["users"].find({"department_id": ObjectId(data_dict["assigned_department"]), "status": True}).to_list(None)
 
-    # Retornar ticket
-    ticket = await db["tickets"].find_one({"_id": new_ticket.inserted_id})
-    return ticket_helper(ticket)
+   # Obtener datos relacionados
+    if created_ticket.get("category"):
+        category = await db["categories"].find_one({"_id": ObjectId(created_ticket["category"])})
+        created_ticket["category"] = {
+            "id": str(category["_id"]),
+            "name": category["name"] if category else None
+        }
+
+    if created_ticket.get("assigned_department"):
+        department = await db["departments"].find_one({"_id": ObjectId(created_ticket["assigned_department"])})
+        created_ticket["assigned_department"] = {
+            "id": str(department["_id"]),
+            "name": department["name"] if department else None
+        }
+
+    if created_ticket.get("created_user_id"):
+        user = await db["users"].find_one({"_id": ObjectId(created_ticket["created_user_id"])})
+        created_ticket["created_user"] = {
+            "id": str(user["_id"]),
+            "fullname": user["fullname"] if user else None,
+            "email": user["email"] if user else None,
+            "phone_ext": user["phone_ext"] if user else None
+        }
+
+    # Enviar correos a los usuarios del departamento
+    for user in dept_users:
+            send_email(
+                to=user["email"],
+                subject="Nuevo ticket asignado a tu departamento",
+                body=f"Hola {user['fullname']},\n\nSe ha creado un nuevo ticket #{str(new_ticket.inserted_id)} asignado a tu departamento.\n\nPor favor revisa el sistema."
+            )
+
+    # Retornar el ticket creado
+    return ticket_helper(created_ticket)
 
 # 4. Actualizar ticket estado
 @router.put("/{ticket_id}/estado")
@@ -167,8 +200,44 @@ async def asignar_usuarios_a_ticket(
 # 8. Obtener tickets asignados al usuario actual
 @router.get("/asignados-a-mi/")
 async def get_tickets_asignados_a_mi(db=Depends(get_db), current_user: User = Depends(get_current_user)):
-    tickets = await db["tickets"].find({"assigned_users.user_id": current_user.id}).to_list(length=None)
-    return [ticket_helper(t) for t in tickets]
+    tickets = await db["tickets"].find({"assigned_users": str(current_user.id)}).to_list(length=None)
+    
+    # Formatear la respuesta
+    formatted_tickets = []
+    for ticket in tickets:
+        formatted_ticket = {
+            "id": ticket.get("_id"),
+            "title": ticket.get("title"),
+            "description": ticket.get("description"),
+            "category": {
+                "id": ticket.get("category", {}).get("_id"),
+                "name": ticket.get("category", {}).get("name")
+            },
+            "assigned_department": {
+                "id": ticket.get("assigned_department", {}).get("_id"),
+                "name": ticket.get("assigned_department", {}).get("name")
+            },
+            "created_user": {
+                "id": ticket.get("created_user_id"),
+                "fullname": ticket.get("created_user_fullname"),
+                "email": ticket.get("created_user_email")
+            },
+            "assigned_users": [
+                {
+                    "id": user.get("_id"),
+                    "fullname": user.get("fullname"),
+                    "email": user.get("email")
+                } for user in ticket.get("assigned_users", [])
+            ],
+            "messages": ticket.get("messages", []),
+            "status": ticket.get("status"),
+            "createdAt": ticket.get("createdAt"),
+            "updatedAt": ticket.get("updatedAt")
+        }
+        formatted_tickets.append(formatted_ticket)
+
+    return formatted_tickets
+
 
 # 9. Obtener tickets asignados al departamento del usuario
 @router.get("/asignados-departamento/")
@@ -179,16 +248,48 @@ async def get_tickets_departamento(db=Depends(get_db), current_user: User = Depe
 # 10. Obtener tickets creados por el usuario y su departamento
 @router.get("/creados/")
 async def get_tickets_creados(db=Depends(get_db), current_user: User = Depends(get_current_user)):
-    mios = await db["tickets"].find({"created_user_id": current_user.id}).to_list(length=None)
-    departamento = await db["tickets"].find({
-        "assigned_department": current_user.department,
-        "created_user_id": {"$ne": current_user.id}
+    # Obtener todos los tickets creados por usuarios en el mismo departamento
+    departamento_tickets = await db["tickets"].find({
+        "created_user_id": {"$in": [str(user["_id"]) for user in await db["users"].find({"department": current_user.department}).to_list(length=None)]}
     }).to_list(length=None)
 
-    return {
-        "mios": [ticket_helper(t) for t in mios],
-        "departamento": [ticket_helper(t) for t in departamento]
-    }
+    # Formatear la respuesta
+    formatted_tickets = []
+    for ticket in departamento_tickets:
+        formatted_ticket = {
+            "id": ticket.get("_id"),
+            "title": ticket.get("title"),
+            "description": ticket.get("description"),
+            "category": {
+                "id": ticket.get("category", {}).get("_id"),
+                "name": ticket.get("category", {}).get("name")
+            },
+            "assigned_department": {
+                "id": ticket.get("assigned_department", {}).get("_id"),
+                "name": ticket.get("assigned_department", {}).get("name")
+            },
+            "created_user": {
+                "id": ticket.get("created_user_id"),
+                "fullname": ticket.get("created_user_fullname"),
+                "email": ticket.get("created_user_email")
+            },
+            "assigned_users": [
+                {
+                    "id": user.get("_id"),
+                    "fullname": user.get("fullname"),
+                    "email": user.get("email")
+                } for user in ticket.get("assigned_users", [])
+            ],
+            "messages": ticket.get("messages", []),
+            "status": ticket.get("status"),
+            "createdAt": ticket.get("createdAt"),
+            "updatedAt": ticket.get("updatedAt")
+        }
+        formatted_tickets.append(formatted_ticket)
+
+    return formatted_tickets
+
+
 
 # 11. Agregar mensaje a un ticket
 @router.post("/{ticket_id}/mensajes/")
@@ -276,9 +377,10 @@ async def get_all_tickets_by_department_users(
     db=Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result_users = await db["users"].find({"department": current_user.department}).to_list(length=None)
-    user_ids = [user["id"] for user in result_users]
+    result_users = await db["users"].find({"department": str(current_user.department)}).to_list(length=None)
+    user_ids = [str(user["_id"]) for user in result_users]  # Asegúrate de usar el ID correcto
 
     result_tickets = await db["tickets"].find({"created_user_id": {"$in": user_ids}}).to_list(length=None)
     return [ticket_helper(ticket) for ticket in result_tickets]
+
  

@@ -11,9 +11,9 @@ from app.models.user_model import User
 class TicketCreate(BaseModel):
     title: str
     description: str
-    category_id: Optional[int]
-    assigned_department_id: Optional[int]
-    created_user_id: Optional[int]
+    category: Optional[str]
+    assigned_department: Optional[str]
+    created_user: Optional[str]
     status: Optional[str] = "1"
 
 class TicketUpdate(BaseModel):
@@ -26,19 +26,12 @@ class TicketBase(BaseModel):
     title: str
     description: str
     status: Optional[str] = "1"
-class TicketCreate(BaseModel):
-    title: str
-    description: str
-    category_id: Optional[int]
-    assigned_department: Optional[int]
-    created_user_id: Optional[int]
-    status: Optional[str] = "1"
 
 class TicketUpdate(BaseModel):
     title: Optional[str]
     description: Optional[str]
-    category_id: Optional[int]
-    assigned_department: Optional[int]
+    category: Optional[str]
+    assigned_department: Optional[str]
     status: Optional[str]
 
 class TicketInDB(TicketBase):
